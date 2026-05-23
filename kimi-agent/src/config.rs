@@ -206,29 +206,10 @@ pub fn get_default_config() -> Config {
     }
 }
 
-pub async fn load_config(config_file: Option<&Path>) -> Result<Config, ConfigError> {
-    let _ = ensure_share_dir().await;
-    let default_config_file = get_config_file();
-    let config_file = config_file.unwrap_or(default_config_file.as_path());
-    let is_default_config_file =
-        normalize_path(config_file).await == normalize_path(&default_config_file).await;
-    debug!("Loading config from file: {}", config_file.display());
-
-    if is_default_config_file && !path_exists(config_file).await {
-        migrate_json_config_to_toml().await?;
-    }
-
-    if !path_exists(config_file).await {
-        let mut config = get_default_config();
-        debug!(
-            "No config file found, creating default config: {:?}",
-            config
-        );
-        save_config(&config, Some(config_file)).await?;
-        config.is_from_default_location = is_default_config_file;
-        return Ok(config);
-    }
-
+async fn load_existing_config_file(
+    config_file: &Path,
+    is_default_config_file: bool,
+) -> Result<Config, ConfigError> {
     let config_text = tokio::fs::read_to_string(config_file)
         .await
         .map_err(|err| ConfigError::new(format!("Failed to read config file: {err}")))?;
@@ -268,6 +249,37 @@ pub async fn load_config(config_file: Option<&Path>) -> Result<Config, ConfigErr
         ))
     })?;
     Ok(config)
+}
+
+pub async fn validate_explicit_config_file(config_file: &Path) -> Result<(), ConfigError> {
+    let _ = load_existing_config_file(config_file, false).await?;
+    Ok(())
+}
+
+pub async fn load_config(config_file: Option<&Path>) -> Result<Config, ConfigError> {
+    let _ = ensure_share_dir().await;
+    let default_config_file = get_config_file();
+    let config_file = config_file.unwrap_or(default_config_file.as_path());
+    let is_default_config_file =
+        normalize_path(config_file).await == normalize_path(&default_config_file).await;
+    debug!("Loading config from file: {}", config_file.display());
+
+    if is_default_config_file && !path_exists(config_file).await {
+        migrate_json_config_to_toml().await?;
+    }
+
+    if !path_exists(config_file).await {
+        let mut config = get_default_config();
+        debug!(
+            "No config file found, creating default config: {:?}",
+            config
+        );
+        save_config(&config, Some(config_file)).await?;
+        config.is_from_default_location = is_default_config_file;
+        return Ok(config);
+    }
+
+    load_existing_config_file(config_file, is_default_config_file).await
 }
 
 pub fn load_config_from_string(config_string: &str) -> Result<Config, ConfigError> {

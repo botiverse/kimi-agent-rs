@@ -6,7 +6,7 @@ use kaos::KaosPath;
 
 use crate::agentspec::{default_agent_file, okabe_agent_file};
 use crate::app::{ConfigInput, KimiCLI};
-use crate::config::load_config_from_string;
+use crate::config::{load_config_from_string, validate_explicit_config_file};
 use crate::constant::VERSION;
 use crate::metadata::{load_metadata, save_metadata};
 use crate::session::Session;
@@ -185,6 +185,8 @@ pub async fn run() -> Result<()> {
 
     init_logging(cli.debug).await?;
 
+    preflight_explicit_config(&cli).await?;
+
     if let Some(command) = cli.command {
         return match command {
             Commands::Info(args) => {
@@ -242,6 +244,21 @@ pub async fn run() -> Result<()> {
     let session = instance.session().clone();
     instance.run_wire_stdio().await?;
     post_run(&session).await?;
+    Ok(())
+}
+
+async fn preflight_explicit_config(cli: &Cli) -> Result<()> {
+    if let Some(config_string) = cli.config_string.as_ref() {
+        load_config_from_string(config_string).map_err(|err| anyhow::anyhow!(err.to_string()))?;
+    }
+
+    if let Some(config_file) = cli.config_file.as_ref() {
+        ensure_file_exists(config_file, "config file").await?;
+        validate_explicit_config_file(config_file)
+            .await
+            .map_err(|err| anyhow::anyhow!(err.to_string()))?;
+    }
+
     Ok(())
 }
 
@@ -440,4 +457,44 @@ async fn post_run(session: &Session) -> Result<()> {
 
     save_metadata(&metadata).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn preflight_rejects_bad_explicit_config_file_for_subcommand() {
+        let temp = tempdir().expect("tempdir");
+        let bad_config = temp.path().join("bad.toml");
+        fs::write(&bad_config, "not valid {").expect("write bad config");
+
+        let cli = Cli::try_parse_from([
+            "kimi-agent",
+            "--config-file",
+            bad_config.to_str().expect("utf8 path"),
+            "info",
+        ])
+        .expect("parse cli");
+
+        let err = preflight_explicit_config(&cli)
+            .await
+            .expect_err("bad config file should fail");
+        let message = err.to_string();
+        assert!(message.contains("Invalid TOML in configuration file"));
+        assert!(message.contains(bad_config.to_str().expect("utf8 path")));
+    }
+
+    #[tokio::test]
+    async fn preflight_rejects_bad_inline_config_for_subcommand() {
+        let cli = Cli::try_parse_from(["kimi-agent", "--config", "not valid {", "info"])
+            .expect("parse cli");
+
+        let err = preflight_explicit_config(&cli)
+            .await
+            .expect_err("bad inline config should fail");
+        assert!(err.to_string().contains("Invalid configuration text"));
+    }
 }
