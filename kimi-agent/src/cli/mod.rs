@@ -13,6 +13,7 @@ use crate::session::Session;
 use crate::utils::init_logging;
 use tracing::{info, warn};
 
+pub mod export;
 pub mod info;
 pub mod mcp;
 
@@ -169,6 +170,8 @@ enum AgentKind {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    /// Export session data as a ZIP archive.
+    Export(export::ExportArgs),
     /// Show version and protocol information.
     Info(info::InfoArgs),
     /// Manage MCP server configurations.
@@ -189,6 +192,7 @@ pub async fn run() -> Result<()> {
 
     if let Some(command) = cli.command {
         return match command {
+            Commands::Export(args) => export::run_export_command(args).await,
             Commands::Info(args) => {
                 info::run_info_command(args);
                 Ok(())
