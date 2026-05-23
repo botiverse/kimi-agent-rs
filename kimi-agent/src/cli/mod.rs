@@ -453,6 +453,7 @@ async fn post_run(session: &Session) -> Result<()> {
         }
     } else {
         meta.last_session_id = Some(session.id.clone());
+        eprintln!("\nTo resume this session: kimi-agent --session {}", session.id);
     }
 
     save_metadata(&metadata).await;
