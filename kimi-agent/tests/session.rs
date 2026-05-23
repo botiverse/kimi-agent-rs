@@ -7,7 +7,7 @@ use serde_json::json;
 use tempfile::TempDir;
 
 use kaos::KaosPath;
-use kimi_agent::session::Session;
+use kimi_agent::session::{Session, preserve_interrupted_turn};
 use kimi_agent::wire::{
     TextPart, TurnBegin, UserInput, WIRE_PROTOCOL_VERSION, WireFileMetadata, WireMessage,
     WireMessageRecord,
@@ -225,4 +225,79 @@ async fn test_create_named_session() {
     let found = Session::find(work_path, &session.id).await;
     assert!(found.is_some());
     assert_eq!(found.expect("session").id, session.id);
+}
+
+#[tokio::test]
+async fn test_preserve_interrupted_turn_writes_context_and_wire_for_empty_session() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home_dir = TempDir::new().expect("home dir");
+    let _env = set_home_env(home_dir.path());
+
+    let work_dir = TempDir::new().expect("work dir");
+    let work_path = KaosPath::from(work_dir.path().to_path_buf());
+
+    let session = Session::create(work_path, None, None).await;
+    let user_input = UserInput::Text("preserve me".to_string());
+
+    preserve_interrupted_turn(&session, &user_input)
+        .await
+        .expect("preserve interrupted turn");
+
+    let context = std::fs::read_to_string(&session.context_file).expect("read context");
+    assert!(context.contains("preserve me"));
+
+    let wire = std::fs::read_to_string(session.dir().join("wire.jsonl")).expect("read wire");
+    assert!(wire.contains("\"type\":\"TurnBegin\""));
+    assert!(wire.contains("preserve me"));
+}
+
+#[tokio::test]
+async fn test_preserve_interrupted_turn_fills_missing_wire_without_duplicating_context() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home_dir = TempDir::new().expect("home dir");
+    let _env = set_home_env(home_dir.path());
+
+    let work_dir = TempDir::new().expect("work dir");
+    let work_path = KaosPath::from(work_dir.path().to_path_buf());
+
+    let session = Session::create(work_path, None, None).await;
+    write_context_message(&session.context_file, "already there");
+    let before = std::fs::read_to_string(&session.context_file).expect("read context before");
+
+    preserve_interrupted_turn(&session, &UserInput::Text("already there".to_string()))
+        .await
+        .expect("preserve interrupted turn");
+
+    let after = std::fs::read_to_string(&session.context_file).expect("read context after");
+    assert_eq!(before, after);
+
+    let wire = std::fs::read_to_string(session.dir().join("wire.jsonl")).expect("read wire");
+    assert!(wire.contains("\"type\":\"TurnBegin\""));
+}
+
+#[tokio::test]
+async fn test_preserve_interrupted_turn_inserts_newline_after_checkpoint_only_context() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home_dir = TempDir::new().expect("home dir");
+    let _env = set_home_env(home_dir.path());
+
+    let work_dir = TempDir::new().expect("work dir");
+    let work_path = KaosPath::from(work_dir.path().to_path_buf());
+
+    let session = Session::create(work_path, None, None).await;
+    std::fs::write(&session.context_file, "{\"role\":\"_checkpoint\",\"id\":0}")
+        .expect("write checkpoint-only context");
+
+    preserve_interrupted_turn(
+        &session,
+        &UserInput::Text("checkpoint preserved".to_string()),
+    )
+    .await
+    .expect("preserve interrupted turn");
+
+    let context = std::fs::read_to_string(&session.context_file).expect("read context");
+    let lines: Vec<_> = context.lines().collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0], "{\"role\":\"_checkpoint\",\"id\":0}");
+    assert!(lines[1].contains("checkpoint preserved"));
 }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
@@ -10,6 +11,7 @@ use kosong::chat_provider::ChatProviderError;
 use kosong::tooling::tool_error;
 
 use crate::constant::{NAME, VERSION};
+use crate::session::preserve_interrupted_turn;
 use crate::soul::kimisoul::KimiSoul;
 use crate::soul::{LLMNotSet, LLMNotSupported, MaxStepsReached, RunCancelled, Soul, run_soul};
 use crate::utils::{Queue, QueueShutDown};
@@ -36,6 +38,8 @@ pub struct WireServer {
     write_queue: Queue<Value>,
     pending: Arc<tokio::sync::Mutex<HashMap<String, PendingRequest>>>,
     cancel_token: Arc<tokio::sync::Mutex<Option<CancellationToken>>>,
+    active_turn_task: Arc<tokio::sync::Mutex<Option<JoinHandle<()>>>>,
+    active_user_input: Arc<tokio::sync::Mutex<Option<crate::wire::UserInput>>>,
 }
 
 pub type WireOverStdio = WireServer;
@@ -47,6 +51,8 @@ impl WireServer {
             write_queue: Queue::new(),
             pending: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             cancel_token: Arc::new(tokio::sync::Mutex::new(None)),
+            active_turn_task: Arc::new(tokio::sync::Mutex::new(None)),
+            active_user_input: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -303,13 +309,16 @@ impl WireServer {
         let cancel_token = CancellationToken::new();
         let cancel_slot = Arc::clone(&self.cancel_token);
         *cancel_slot.lock().await = Some(cancel_token.clone());
+        *self.active_user_input.lock().await = Some(params.user_input.clone());
 
         let soul = Arc::clone(&self.soul);
         let write_queue = self.write_queue.clone();
         let pending = Arc::clone(&self.pending);
         let wire_file = Some(self.soul.runtime().session.wire_file());
+        let active_user_input = Arc::clone(&self.active_user_input);
+        let active_turn_task = Arc::clone(&self.active_turn_task);
 
-        tokio::spawn(async move {
+        *active_turn_task.lock().await = Some(tokio::spawn(async move {
             let write_queue_for_stream = write_queue.clone();
             let pending_for_stream = Arc::clone(&pending);
             let run_handle = tokio::task::spawn_blocking(move || {
@@ -334,6 +343,7 @@ impl WireServer {
             };
 
             *cancel_slot.lock().await = None;
+            *active_user_input.lock().await = None;
 
             match run_result {
                 Ok(()) => {
@@ -418,7 +428,7 @@ impl WireServer {
                     }
                 }
             }
-        });
+        }));
     }
 
     async fn handle_cancel(&mut self, msg: JsonRpcMessage) {
@@ -561,6 +571,25 @@ impl WireServer {
     }
 
     async fn shutdown(&self) {
+        let active_user_input = self.active_user_input.lock().await.clone();
+        if let Some(token) = self.cancel_token.lock().await.take() {
+            token.cancel();
+        }
+        if let Some(task) = self.active_turn_task.lock().await.take() {
+            let _ = tokio::time::timeout(std::time::Duration::from_millis(500), async {
+                let _ = task.await;
+            })
+            .await;
+        }
+        if let Some(user_input) = active_user_input.as_ref() {
+            if let Err(err) =
+                preserve_interrupted_turn(&self.soul.runtime().session, user_input).await
+            {
+                error!(error = ?err, "Failed to preserve interrupted turn state");
+            }
+        }
+        *self.active_user_input.lock().await = None;
+
         let pending = {
             let mut pending = self.pending.lock().await;
             std::mem::take(&mut *pending)
@@ -579,10 +608,6 @@ impl WireServer {
                     req.resolve(return_value);
                 }
             }
-        }
-
-        if let Some(token) = self.cancel_token.lock().await.take() {
-            token.cancel();
         }
 
         self.write_queue.shutdown(false);
