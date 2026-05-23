@@ -3,9 +3,10 @@ use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
 use futures::StreamExt;
+use tokio::io::AsyncBufReadExt;
 
 use kaos::KaosPath;
-use kosong::message::{Message, Role};
+use kosong::message::{ContentPart, Message, Role, TextPart};
 use tracing::{debug, error, info, warn};
 
 use crate::metadata::{WorkDirMeta, load_metadata, save_metadata};
@@ -322,6 +323,39 @@ impl Session {
     }
 }
 
+pub async fn preserve_interrupted_turn(
+    session: &Session,
+    user_input: &UserInput,
+) -> anyhow::Result<()> {
+    if !context_has_messages(&session.context_file).await? {
+        let user_message = match user_input.clone() {
+            UserInput::Text(text) => {
+                Message::new(Role::User, vec![ContentPart::Text(TextPart::new(text))])
+            }
+            UserInput::Parts(parts) => Message::new(Role::User, parts),
+        };
+        let mut value = serde_json::to_value(&user_message)?;
+        strip_message_nulls(&mut value);
+        let line = serde_json::to_string(&value)?;
+        append_jsonl_line(&session.context_file, &line).await?;
+    }
+
+    if session.wire_file.is_empty().await {
+        session
+            .wire_file
+            .append_message(
+                &WireMessage::TurnBegin(TurnBegin {
+                    user_input: user_input.clone(),
+                }),
+                None,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+    }
+
+    Ok(())
+}
+
 async fn migrate_session_context_file(sessions_dir: &PathBuf, session_id: &str) {
     let old_context_file = sessions_dir.join(format!("{session_id}.jsonl"));
     let new_context_file = sessions_dir.join(session_id).join("context.jsonl");
@@ -402,4 +436,77 @@ async fn file_mtime(path: &PathBuf) -> Option<f64> {
             .unwrap_or_default()
             .as_secs_f64(),
     )
+}
+
+async fn context_has_messages(path: &PathBuf) -> anyhow::Result<bool> {
+    let file = match tokio::fs::File::open(path).await {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(err) => return Err(err.into()),
+    };
+
+    let mut lines = tokio::io::BufReader::new(file).lines();
+    while let Some(line) = lines.next_line().await? {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let value: serde_json::Value = serde_json::from_str(line)?;
+        match value.get("role").and_then(|v| v.as_str()) {
+            Some("_usage") | Some("_checkpoint") => continue,
+            _ => return Ok(true),
+        }
+    }
+
+    Ok(false)
+}
+
+async fn append_jsonl_line(path: &PathBuf, line: &str) -> anyhow::Result<()> {
+    let needs_leading_newline = match tokio::fs::read(path).await {
+        Ok(bytes) => bytes.last().is_some_and(|last| *last != b'\n'),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => false,
+        Err(err) => return Err(err.into()),
+    };
+
+    let mut file = tokio::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .await?;
+    if needs_leading_newline {
+        tokio::io::AsyncWriteExt::write_all(&mut file, b"\n").await?;
+    }
+    tokio::io::AsyncWriteExt::write_all(&mut file, line.as_bytes()).await?;
+    tokio::io::AsyncWriteExt::write_all(&mut file, b"\n").await?;
+    Ok(())
+}
+
+fn strip_message_nulls(value: &mut serde_json::Value) {
+    let serde_json::Value::Object(map) = value else {
+        return;
+    };
+
+    for key in ["name", "tool_calls", "tool_call_id", "partial"] {
+        if matches!(map.get(key), Some(serde_json::Value::Null)) {
+            map.remove(key);
+        }
+    }
+
+    let Some(serde_json::Value::Array(tool_calls)) = map.get_mut("tool_calls") else {
+        return;
+    };
+
+    for call in tool_calls.iter_mut() {
+        let serde_json::Value::Object(call_map) = call else {
+            continue;
+        };
+        if matches!(call_map.get("extras"), Some(serde_json::Value::Null)) {
+            call_map.remove("extras");
+        }
+        if let Some(serde_json::Value::Object(function)) = call_map.get_mut("function") {
+            if matches!(function.get("arguments"), Some(serde_json::Value::Null)) {
+                function.remove("arguments");
+            }
+        }
+    }
 }
