@@ -85,7 +85,7 @@ version number must not diverge from the corresponding Python release.
 
 ## Wire protocol and data compatibility
 
-- Wire protocol version `1.1` with JSON-RPC over stdio.
+- Wire protocol version `1.10` with JSON-RPC over stdio.
 - Data layout under `~/.kimi` must match Python:
   - `config.toml`, `kimi.json`, session directories, context JSONL, wire JSONL.
 - `Message.content` string/parts serde rules must match Python exactly.
