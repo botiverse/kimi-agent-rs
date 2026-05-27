@@ -1,14 +1,14 @@
 use serde_json::json;
 
 #[test]
-fn test_ensure_property_types_adds_string_default() {
+fn test_ensure_property_types_coerces_string_to_array() {
     let mut schema = json!({
+        "type": "object",
         "properties": {
             "name": {
-                "description": "The name"
+                "type": "string"
             }
-        },
-        "type": "object"
+        }
     });
 
     kimi_agent::wire::ensure_property_types(&mut schema);
@@ -16,164 +16,105 @@ fn test_ensure_property_types_adds_string_default() {
     assert_eq!(
         schema,
         json!({
+            "type": ["object"],
             "properties": {
                 "name": {
-                    "description": "The name",
-                    "type": "string"
+                    "type": ["string"]
                 }
-            },
-            "type": "object"
+            }
         })
     );
 }
 
 #[test]
-fn test_ensure_property_types_infers_from_enum() {
+fn test_ensure_property_types_passes_through_array() {
     let mut schema = json!({
-        "properties": {
-            "status": {
-                "enum": ["pending", "in_progress", "done"]
-            }
-        },
-        "type": "object"
+        "type": ["string", "null"]
     });
 
     kimi_agent::wire::ensure_property_types(&mut schema);
 
     assert_eq!(
-        schema["properties"]["status"]["type"],
-        "string"
+        schema,
+        json!({
+            "type": ["string", "null"]
+        })
     );
 }
 
 #[test]
-fn test_ensure_property_types_infers_from_anyof_null() {
+fn test_ensure_property_types_nested_properties() {
     let mut schema = json!({
+        "type": "object",
         "properties": {
-            "directory": {
-                "anyOf": [
-                    {"type": "string"},
-                    {"type": "null"}
-                ],
-                "default": null
-            }
-        },
-        "type": "object"
-    });
-
-    kimi_agent::wire::ensure_property_types(&mut schema);
-
-    assert_eq!(
-        schema["properties"]["directory"]["type"],
-        "string"
-    );
-}
-
-#[test]
-fn test_ensure_property_types_infers_object_from_properties() {
-    let mut schema = json!({
-        "properties": {
-            "nested": {
+            "user": {
+                "type": "object",
                 "properties": {
-                    "value": {"description": "A value"}
+                    "id": {"type": "number"}
                 }
             }
-        },
-        "type": "object"
+        }
     });
 
     kimi_agent::wire::ensure_property_types(&mut schema);
 
-    assert_eq!(
-        schema["properties"]["nested"]["type"],
-        "object"
-    );
-    assert_eq!(
-        schema["properties"]["nested"]["properties"]["value"]["type"],
-        "string"
-    );
+    assert_eq!(schema["type"], json!(["object"]));
+    assert_eq!(schema["properties"]["user"]["type"], json!(["object"]));
+    assert_eq!(schema["properties"]["user"]["properties"]["id"]["type"], json!(["number"]));
 }
 
 #[test]
-fn test_ensure_property_types_infers_array_from_items() {
+fn test_ensure_property_types_array_items() {
     let mut schema = json!({
-        "properties": {
-            "tags": {
-                "items": {"description": "A tag"}
-            }
-        },
-        "type": "object"
+        "type": "array",
+        "items": {"type": "string"}
     });
 
     kimi_agent::wire::ensure_property_types(&mut schema);
 
-    assert_eq!(
-        schema["properties"]["tags"]["type"],
-        "array"
-    );
-    assert_eq!(
-        schema["properties"]["tags"]["items"]["type"],
-        "string"
-    );
+    assert_eq!(schema["type"], json!(["array"]));
+    assert_eq!(schema["items"]["type"], json!(["string"]));
 }
 
 #[test]
-fn test_ensure_property_types_preserves_existing_type() {
+fn test_ensure_property_types_additional_properties() {
     let mut schema = json!({
-        "properties": {
-            "count": {
-                "type": "integer",
-                "minimum": 0
-            }
-        },
-        "type": "object"
+        "type": "object",
+        "additionalProperties": {"type": "boolean"}
     });
 
     kimi_agent::wire::ensure_property_types(&mut schema);
 
-    assert_eq!(
-        schema["properties"]["count"]["type"],
-        "integer"
-    );
-    assert_eq!(
-        schema["properties"]["count"]["minimum"],
-        0
-    );
+    assert_eq!(schema["type"], json!(["object"]));
+    assert_eq!(schema["additionalProperties"]["type"], json!(["boolean"]));
 }
 
 #[test]
-fn test_ensure_property_types_deeply_nested() {
+fn test_ensure_property_types_allof() {
     let mut schema = json!({
-        "properties": {
-            "outer": {
-                "properties": {
-                    "inner": {
-                        "items": {
-                            "properties": {
-                                "leaf": {"description": "leaf node"}
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "type": "object"
+        "allOf": [
+            {"type": "object"},
+            {"type": "string"}
+        ]
     });
 
     kimi_agent::wire::ensure_property_types(&mut schema);
 
-    // outer -> object (has properties)
-    assert_eq!(schema["properties"]["outer"]["type"], "object");
-    // inner -> array (has items)
-    assert_eq!(schema["properties"]["outer"]["properties"]["inner"]["type"], "array");
-    // inner.items -> object (has properties)
-    assert_eq!(
-        schema["properties"]["outer"]["properties"]["inner"]["items"]["type"],
-        "object"
-    );
-    // leaf -> string (default)
-    assert_eq!(
-        schema["properties"]["outer"]["properties"]["inner"]["items"]["properties"]["leaf"]["type"],
-        "string"
-    );
+    assert_eq!(schema["allOf"][0]["type"], json!(["object"]));
+    assert_eq!(schema["allOf"][1]["type"], json!(["string"]));
+}
+
+#[test]
+fn test_ensure_property_types_anyof() {
+    let mut schema = json!({
+        "anyOf": [
+            {"type": "string"},
+            {"type": "null"}
+        ]
+    });
+
+    kimi_agent::wire::ensure_property_types(&mut schema);
+
+    assert_eq!(schema["anyOf"][0]["type"], json!(["string"]));
+    assert_eq!(schema["anyOf"][1]["type"], json!(["null"]));
 }

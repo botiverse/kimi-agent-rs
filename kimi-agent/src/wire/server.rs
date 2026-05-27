@@ -789,106 +789,48 @@ async fn request_tool_call(
     let _ = request.wait().await;
 }
 
-/// Ensure every property in a JSON schema object has a `type` field.
-/// Recursively normalizes nested objects, arrays, and composite schemas.
+/// Ensure all JSON Schema `type` fields are arrays.
+/// Coerces string-typed `"type"` values to single-element arrays,
+/// passes through already-array types unchanged, and recurses into
+/// nested `properties`, `items`, `additionalProperties`, and composite
+/// schemas (`allOf`, `anyOf`, `oneOf`).
 #[doc(hidden)]
 pub fn ensure_property_types(schema: &mut Value) {
     let Some(obj) = schema.as_object_mut() else {
         return;
     };
 
-    // If this schema describes an object, normalize its properties
-    if let Some(Value::Object(props)) = obj.get_mut("properties") {
-        for prop_value in props.values_mut() {
-            ensure_type_on_schema(prop_value);
+    // Coerce "type": "string" → "type": ["string"]
+    if let Some(ty) = obj.get("type") {
+        if ty.is_string() {
+            let s = ty.as_str().unwrap_or("string").to_string();
+            obj.insert("type".to_string(), Value::Array(vec![Value::String(s)]));
         }
     }
 
-    // Recurse into items (array element schema)
+    // Recurse into properties
+    if let Some(Value::Object(props)) = obj.get_mut("properties") {
+        for prop_value in props.values_mut() {
+            ensure_property_types(prop_value);
+        }
+    }
+
+    // Recurse into items
     if let Some(items) = obj.get_mut("items") {
-        ensure_type_on_schema(items);
+        ensure_property_types(items);
+    }
+
+    // Recurse into additionalProperties
+    if let Some(additional) = obj.get_mut("additionalProperties") {
+        ensure_property_types(additional);
     }
 
     // Recurse into composite schemas
-    for key in ["anyOf", "oneOf", "allOf"] {
+    for key in ["allOf", "anyOf", "oneOf"] {
         if let Some(Value::Array(variants)) = obj.get_mut(key) {
             for variant in variants.iter_mut() {
-                ensure_type_on_schema(variant);
+                ensure_property_types(variant);
             }
         }
     }
-}
-
-/// Ensure a single schema value has a `type` if it is a schema object.
-fn ensure_type_on_schema(value: &mut Value) {
-    let Some(obj) = value.as_object_mut() else {
-        return;
-    };
-
-    // Already has a type — just recurse into nested structures
-    if obj.contains_key("type") {
-        ensure_property_types(value);
-        return;
-    }
-
-    // Infer from enum values
-    if let Some(Value::Array(values)) = obj.get("enum") {
-        if let Some(first) = values.first() {
-            let inferred = json_type_for_value(first);
-            obj.insert("type".to_string(), Value::String(inferred));
-            ensure_property_types(value);
-            return;
-        }
-    }
-
-    // Infer from anyOf/oneOf containing null
-    for key in ["anyOf", "oneOf"] {
-        if let Some(Value::Array(variants)) = obj.get(key) {
-            let non_null: Vec<&Value> = variants
-                .iter()
-                .filter(|v| {
-                    v.get("type")
-                        .and_then(|t| t.as_str())
-                        != Some("null")
-                })
-                .collect();
-            if non_null.len() == 1 {
-                if let Some(ty) = non_null[0].get("type").and_then(|t| t.as_str()) {
-                    obj.insert("type".to_string(), Value::String(ty.to_string()));
-                    ensure_property_types(value);
-                    return;
-                }
-            }
-        }
-    }
-
-    // If it has properties, it's an object
-    if obj.contains_key("properties") {
-        obj.insert("type".to_string(), Value::String("object".to_string()));
-        ensure_property_types(value);
-        return;
-    }
-
-    // If it has items, it's an array
-    if obj.contains_key("items") {
-        obj.insert("type".to_string(), Value::String("array".to_string()));
-        ensure_property_types(value);
-        return;
-    }
-
-    // Default fallback
-    obj.insert("type".to_string(), Value::String("string".to_string()));
-    ensure_property_types(value);
-}
-
-fn json_type_for_value(value: &Value) -> String {
-    match value {
-        Value::String(_) => "string",
-        Value::Number(_) => "number",
-        Value::Bool(_) => "boolean",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-        Value::Null => "null",
-    }
-    .to_string()
 }
