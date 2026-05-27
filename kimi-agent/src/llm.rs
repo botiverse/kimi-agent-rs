@@ -6,7 +6,6 @@ use serde_json::{Map, Value};
 use thiserror::Error;
 
 use kosong::chat_provider::{ChatProvider, ChatProviderError, ChatProviderErrorKind, ThinkingEffort};
-use std::time::Duration;
 
 use crate::config::{LLMModel, LLMProvider, ModelCapability, ProviderType};
 use crate::constant::user_agent;
@@ -35,9 +34,6 @@ impl LLM {
     }
 }
 
-const MAX_AUTH_RETRIES: usize = 3;
-const AUTH_RETRY_DELAY_MS: u64 = 1000;
-
 /// Returns true if the error is an auth-class error that may be resolved by retrying
 /// after a token refresh.
 pub fn is_auth_error(err: &ChatProviderError) -> bool {
@@ -49,40 +45,6 @@ pub fn is_auth_error(err: &ChatProviderError) -> bool {
         }
         _ => false,
     }
-}
-
-/// Retry a future-producing operation up to `max_retries` times when it fails with an
-/// auth-class error, waiting `delay` between attempts.
-pub async fn with_auth_retry<T, F, Fut>(
-    mut f: F,
-    max_retries: usize,
-    delay: Duration,
-) -> Result<T, ChatProviderError>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<T, ChatProviderError>>,
-{
-    let mut last_err_msg = None;
-    for attempt in 0..=max_retries {
-        match f().await {
-            Ok(val) => return Ok(val),
-            Err(err) if attempt < max_retries && is_auth_error(&err) => {
-                tracing::info!(
-                    "Auth retry attempt {}/{} after error: {}",
-                    attempt + 1,
-                    max_retries,
-                    err
-                );
-                tokio::time::sleep(delay).await;
-                last_err_msg = Some(err.message);
-            }
-            Err(err) => return Err(err),
-        }
-    }
-    Err(ChatProviderError::new(
-        ChatProviderErrorKind::Other,
-        last_err_msg.unwrap_or_else(|| "exhausted auth retries".to_string()),
-    ))
 }
 
 pub fn augment_provider_with_env_vars(
@@ -192,22 +154,12 @@ pub async fn create_llm(
                     }
                 }
             }
-            let model_name = model.model.clone();
-            let api_key = provider.api_key.expose_secret().to_string();
-            let base_url = provider.base_url.clone();
-            let mut kimi = with_auth_retry(
-                || async {
-                    kosong::chat_provider::kimi::Kimi::new(
-                        model_name.clone(),
-                        Some(api_key.clone()),
-                        Some(base_url.clone()),
-                        Some(headers.clone()),
-                    )
-                },
-                MAX_AUTH_RETRIES,
-                Duration::from_millis(AUTH_RETRY_DELAY_MS),
+            let mut kimi = kosong::chat_provider::kimi::Kimi::new(
+                model.model.clone(),
+                Some(provider.api_key.expose_secret().to_string()),
+                Some(provider.base_url.clone()),
+                Some(headers),
             )
-            .await
             .map_err(map_chat_provider_error)?;
 
             let mut kwargs = Map::new();
