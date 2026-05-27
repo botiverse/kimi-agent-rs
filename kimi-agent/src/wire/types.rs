@@ -233,13 +233,15 @@ impl Eq for ToolCallRequest {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SubagentEvent {
-    pub task_tool_call_id: String,
+    pub parent_tool_call_id: String,
+    pub agent_id: Option<String>,
+    pub subagent_type: Option<String>,
     pub event: Box<WireMessage>,
 }
 
 impl SubagentEvent {
     pub fn new(
-        task_tool_call_id: impl Into<String>,
+        parent_tool_call_id: impl Into<String>,
         event: WireMessage,
     ) -> Result<Self, WireError> {
         if !is_event(&event) {
@@ -248,7 +250,9 @@ impl SubagentEvent {
             ));
         }
         Ok(Self {
-            task_tool_call_id: task_tool_call_id.into(),
+            parent_tool_call_id: parent_tool_call_id.into(),
+            agent_id: None,
+            subagent_type: None,
             event: Box::new(event),
         })
     }
@@ -261,14 +265,20 @@ impl Serialize for SubagentEvent {
     {
         #[derive(Serialize)]
         struct SubagentEventSerde {
-            task_tool_call_id: String,
+            parent_tool_call_id: String,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            agent_id: Option<String>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            subagent_type: Option<String>,
             event: WireMessageEnvelope,
         }
 
         let envelope = WireMessageEnvelope::from_wire_message(&self.event)
             .map_err(serde::ser::Error::custom)?;
         let helper = SubagentEventSerde {
-            task_tool_call_id: self.task_tool_call_id.clone(),
+            parent_tool_call_id: self.parent_tool_call_id.clone(),
+            agent_id: self.agent_id.clone(),
+            subagent_type: self.subagent_type.clone(),
             event: envelope,
         };
         helper.serialize(serializer)
@@ -282,7 +292,12 @@ impl<'de> Deserialize<'de> for SubagentEvent {
     {
         #[derive(Deserialize)]
         struct SubagentEventSerde {
-            task_tool_call_id: String,
+            #[serde(default, alias = "task_tool_call_id")]
+            parent_tool_call_id: String,
+            #[serde(default)]
+            agent_id: Option<String>,
+            #[serde(default)]
+            subagent_type: Option<String>,
             event: WireMessageEnvelope,
         }
 
@@ -297,7 +312,9 @@ impl<'de> Deserialize<'de> for SubagentEvent {
             ));
         }
         Ok(SubagentEvent {
-            task_tool_call_id: helper.task_tool_call_id,
+            parent_tool_call_id: helper.parent_tool_call_id,
+            agent_id: helper.agent_id,
+            subagent_type: helper.subagent_type,
             event: Box::new(event),
         })
     }

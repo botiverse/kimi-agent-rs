@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
 use futures::StreamExt;
+use serde::{Deserialize, Serialize};
 use tokio::io::AsyncBufReadExt;
 
 use kaos::KaosPath;
@@ -11,6 +12,55 @@ use tracing::{debug, error, info, warn};
 
 use crate::metadata::{WorkDirMeta, load_metadata, save_metadata};
 use crate::wire::{TurnBegin, UserInput, WireFile, WireMessage};
+
+const STATE_FILE_NAME: &str = "state.json";
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionState {
+    #[serde(default = "default_state_version")]
+    pub version: i64,
+    #[serde(default)]
+    pub additional_dirs: Vec<String>,
+    #[serde(default)]
+    pub custom_title: Option<String>,
+    #[serde(default)]
+    pub title_generated: bool,
+    #[serde(default)]
+    pub title_generate_attempts: i64,
+    #[serde(default)]
+    pub plan_mode: bool,
+    #[serde(default)]
+    pub plan_session_id: Option<String>,
+    #[serde(default)]
+    pub plan_slug: Option<String>,
+    #[serde(default)]
+    pub wire_mtime: Option<f64>,
+    #[serde(default)]
+    pub archived: bool,
+    #[serde(default)]
+    pub archived_at: Option<f64>,
+    #[serde(default)]
+    pub auto_archive_exempt: bool,
+}
+
+impl Default for SessionState {
+    fn default() -> Self {
+        Self {
+            version: default_state_version(),
+            additional_dirs: Vec::new(),
+            custom_title: None,
+            title_generated: false,
+            title_generate_attempts: 0,
+            plan_mode: false,
+            plan_session_id: None,
+            plan_slug: None,
+            wire_mtime: None,
+            archived: false,
+            archived_at: None,
+            auto_archive_exempt: false,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct Session {
@@ -33,13 +83,42 @@ impl Session {
     }
 
     pub async fn is_empty(&self) -> bool {
+        let state = load_session_state(&self.dir()).await;
+        if state
+            .custom_title
+            .as_deref()
+            .is_some_and(|title| !title.is_empty())
+        {
+            return false;
+        }
         if !self.wire_file.is_empty().await {
             return false;
         }
-        match tokio::fs::metadata(&self.context_file).await {
-            Ok(metadata) => metadata.len() == 0,
-            Err(_) => true,
+
+        let file = match tokio::fs::File::open(&self.context_file).await {
+            Ok(file) => file,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return true,
+            Err(_) => return false,
+        };
+
+        let mut lines = tokio::io::BufReader::new(file).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            let has_non_system_role = match serde_json::from_str::<serde_json::Value>(line) {
+                Ok(value) => value
+                    .get("role")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(|role| !role.starts_with('_')),
+                Err(_) => return false,
+            };
+            if has_non_system_role {
+                return false;
+            }
         }
+        true
     }
 
     pub async fn delete(&self) {
@@ -52,6 +131,14 @@ impl Session {
     pub async fn refresh(&mut self) {
         self.title = "Untitled".to_string();
         self.updated_at = file_mtime(&self.context_file).await.unwrap_or(0.0);
+
+        let state = load_session_state(&self.dir()).await;
+        if let Some(custom_title) = state.custom_title {
+            if !custom_title.is_empty() {
+                self.title = custom_title;
+                return;
+            }
+        }
 
         let mut records = self.wire_file.iter_records();
         while let Some(record) = records.next().await {
@@ -139,6 +226,8 @@ impl Session {
                 )
             });
 
+        save_session_state(&SessionState::default(), &session_dir).await;
+
         save_metadata(&metadata).await;
 
         let mut session = Session {
@@ -174,6 +263,7 @@ impl Session {
         migrate_session_context_file(&sessions_dir, session_id).await;
 
         let session_dir = sessions_dir.join(session_id);
+        ensure_session_state_file(&session_dir).await;
         if tokio::fs::metadata(&session_dir)
             .await
             .map(|meta| !meta.is_dir())
@@ -260,6 +350,7 @@ impl Session {
         for session_id in session_ids {
             migrate_session_context_file(&sessions_dir, &session_id).await;
             let session_dir = sessions_dir.join(&session_id);
+            ensure_session_state_file(&session_dir).await;
             if tokio::fs::metadata(&session_dir)
                 .await
                 .map(|meta| !meta.is_dir())
@@ -509,4 +600,44 @@ fn strip_message_nulls(value: &mut serde_json::Value) {
             }
         }
     }
+}
+
+fn default_state_version() -> i64 {
+    1
+}
+
+async fn state_file_for_dir(session_dir: &PathBuf) -> PathBuf {
+    session_dir.join(STATE_FILE_NAME)
+}
+
+async fn load_session_state(session_dir: &PathBuf) -> SessionState {
+    let state_file = state_file_for_dir(session_dir).await;
+    let text = match tokio::fs::read_to_string(&state_file).await {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return SessionState::default(),
+        Err(_) => return SessionState::default(),
+    };
+
+    serde_json::from_str::<SessionState>(&text).unwrap_or_default()
+}
+
+async fn save_session_state(state: &SessionState, session_dir: &PathBuf) {
+    let state_file = state_file_for_dir(session_dir).await;
+    let text = serde_json::to_string_pretty(state).unwrap_or_else(|err| {
+        panic!(
+            "Failed to serialize session state {}: {err}",
+            state_file.display()
+        )
+    });
+    tokio::fs::write(&state_file, text)
+        .await
+        .unwrap_or_else(|err| panic!("Failed to write session state {}: {err}", state_file.display()));
+}
+
+async fn ensure_session_state_file(session_dir: &PathBuf) {
+    let state_file = state_file_for_dir(session_dir).await;
+    if tokio::fs::metadata(&state_file).await.is_ok() {
+        return;
+    }
+    save_session_state(&SessionState::default(), session_dir).await;
 }

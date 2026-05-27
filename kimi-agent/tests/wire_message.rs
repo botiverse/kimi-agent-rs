@@ -199,7 +199,7 @@ fn test_wire_message_serde() {
         json!({
             "type": "SubagentEvent",
             "payload": {
-                "task_tool_call_id": "task_789",
+                "parent_tool_call_id": "task_789",
                 "event": {"type": "StepBegin", "payload": {"n": 2}}
             }
         })

@@ -60,6 +60,21 @@ pub struct PromptParams {
     pub user_input: UserInput,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SteerParams {
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetPlanModeParams {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReplayParams {
+    pub checkpoint_id: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct JsonRpcSuccessResponse {
     pub jsonrpc: &'static str,
@@ -124,6 +139,7 @@ pub mod error_codes {
     pub const LLM_NOT_SET: i64 = -32001;
     pub const LLM_NOT_SUPPORTED: i64 = -32002;
     pub const CHAT_PROVIDER_ERROR: i64 = -32003;
+    pub const AUTH_EXPIRED: i64 = -32004;
 }
 
 pub mod statuses {

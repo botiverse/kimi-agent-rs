@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use serde_json::{Map, Value};
 use thiserror::Error;
 
-use kosong::chat_provider::{ChatProvider, ChatProviderError, ThinkingEffort};
+use kosong::chat_provider::{ChatProvider, ChatProviderError, ChatProviderErrorKind, ThinkingEffort};
 
 use crate::config::{LLMModel, LLMProvider, ModelCapability, ProviderType};
 use crate::constant::user_agent;
@@ -31,6 +31,19 @@ pub struct LLM {
 impl LLM {
     pub fn model_name(&self) -> &str {
         self.chat_provider.model_name()
+    }
+}
+
+/// Returns true if the error is an auth-class error that may be resolved by retrying
+/// after a token refresh.
+pub fn is_auth_error(err: &ChatProviderError) -> bool {
+    match err.kind {
+        ChatProviderErrorKind::Status(code) => matches!(code, 401 | 403),
+        ChatProviderErrorKind::Other => {
+            let msg = err.message.to_lowercase();
+            msg.contains("auth") || msg.contains("unauthorized") || msg.contains("forbidden")
+        }
+        _ => false,
     }
 }
 

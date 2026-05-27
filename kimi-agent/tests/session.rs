@@ -97,6 +97,15 @@ fn write_context_message(context_file: &Path, text: &str) {
     std::fs::write(context_file, format!("{line}\n")).expect("write context file");
 }
 
+fn write_state_custom_title(session_dir: &Path, title: &str) {
+    let state_file = session_dir.join("state.json");
+    let state = json!({
+        "version": 1,
+        "custom_title": title,
+    });
+    std::fs::write(state_file, state.to_string()).expect("write state file");
+}
+
 #[tokio::test]
 async fn test_create_sets_fallback_title() {
     let _lock = ENV_LOCK.lock().unwrap();
@@ -109,6 +118,7 @@ async fn test_create_sets_fallback_title() {
     let session = Session::create(work_path, None, None).await;
     assert_eq!(session.title, "Untitled");
     assert!(session.context_file.exists());
+    assert!(session.dir().join("state.json").exists());
 }
 
 #[tokio::test]
@@ -131,6 +141,23 @@ async fn test_find_uses_wire_title() {
             .title
             .starts_with("hello world from wire file")
     );
+}
+
+#[tokio::test]
+async fn test_find_prefers_custom_title_from_state() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home_dir = TempDir::new().expect("home dir");
+    let _env = set_home_env(home_dir.path());
+
+    let work_dir = TempDir::new().expect("work dir");
+    let work_path = KaosPath::from(work_dir.path().to_path_buf());
+
+    let session = Session::create(work_path.clone(), None, None).await;
+    write_state_custom_title(&session.dir(), "Pinned session title");
+    write_wire_turn(&session.dir(), "wire title that should be ignored");
+
+    let found = Session::find(work_path, &session.id).await.expect("session exists");
+    assert_eq!(found.title, "Pinned session title");
 }
 
 #[tokio::test]
@@ -199,6 +226,24 @@ async fn test_list_ignores_empty_sessions() {
     assert_eq!(sessions.len(), 1);
     assert_eq!(sessions[0].id, populated.id);
     assert!(sessions.iter().all(|session| session.id != empty.id));
+}
+
+#[tokio::test]
+async fn test_list_keeps_custom_titled_session_without_messages() {
+    let _lock = ENV_LOCK.lock().unwrap();
+    let home_dir = TempDir::new().expect("home dir");
+    let _env = set_home_env(home_dir.path());
+
+    let work_dir = TempDir::new().expect("work dir");
+    let work_path = KaosPath::from(work_dir.path().to_path_buf());
+
+    let session = Session::create(work_path.clone(), None, None).await;
+    write_state_custom_title(&session.dir(), "Not empty because custom title");
+
+    let sessions = Session::list(work_path).await;
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, session.id);
+    assert_eq!(sessions[0].title, "Not empty because custom title");
 }
 
 #[tokio::test]

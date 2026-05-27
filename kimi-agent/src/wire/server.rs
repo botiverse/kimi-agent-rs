@@ -21,8 +21,8 @@ use crate::wire::{
 
 use crate::wire::jsonrpc::{
     InitializeParams, JsonRpcErrorObject, JsonRpcErrorResponse, JsonRpcErrorResponseNullableId,
-    JsonRpcMessage, JsonRpcSuccessResponse, PromptParams, build_event_message,
-    build_request_message, error_codes, statuses,
+    JsonRpcMessage, JsonRpcSuccessResponse, PromptParams, ReplayParams, SetPlanModeParams,
+    SteerParams, build_event_message, build_request_message, error_codes, statuses,
 };
 use crate::wire::protocol::WIRE_PROTOCOL_VERSION;
 
@@ -175,6 +175,9 @@ impl WireServer {
                 "initialize" => self.handle_initialize(msg).await,
                 "prompt" => self.handle_prompt(msg).await,
                 "cancel" => self.handle_cancel(msg).await,
+                "steer" => self.handle_steer(msg).await,
+                "set_plan_mode" => self.handle_set_plan_mode(msg).await,
+                "replay" => self.handle_replay(msg).await,
                 _ => {
                     if let Some(id) = msg.id.clone() {
                         self.send_error(
@@ -454,6 +457,119 @@ impl WireServer {
         let _ = self
             .write_queue
             .put_nowait(serde_json::to_value(response).unwrap_or(Value::Null));
+    }
+
+    async fn handle_steer(&mut self, msg: JsonRpcMessage) {
+        let Some(id) = msg.id.clone() else {
+            return;
+        };
+        let params: SteerParams = match msg
+            .params
+            .clone()
+            .and_then(|params| serde_json::from_value(params).ok())
+        {
+            Some(params) => params,
+            None => {
+                self.send_error(
+                    id,
+                    error_codes::INVALID_PARAMS,
+                    "Invalid parameters for method `steer`",
+                )
+                .await;
+                return;
+            }
+        };
+        self.soul.push_steer(params.message).await;
+        let response = JsonRpcSuccessResponse {
+            jsonrpc: "2.0",
+            id,
+            result: json!({"status": "ok"}),
+        };
+        let _ = self
+            .write_queue
+            .put_nowait(serde_json::to_value(response).unwrap_or(Value::Null));
+    }
+
+    async fn handle_set_plan_mode(&mut self, msg: JsonRpcMessage) {
+        let Some(id) = msg.id.clone() else {
+            return;
+        };
+        let params: SetPlanModeParams = match msg
+            .params
+            .clone()
+            .and_then(|params| serde_json::from_value(params).ok())
+        {
+            Some(params) => params,
+            None => {
+                self.send_error(
+                    id,
+                    error_codes::INVALID_PARAMS,
+                    "Invalid parameters for method `set_plan_mode`",
+                )
+                .await;
+                return;
+            }
+        };
+        self.soul.set_plan_mode(params.enabled).await;
+        let response = JsonRpcSuccessResponse {
+            jsonrpc: "2.0",
+            id,
+            result: json!({"status": "ok"}),
+        };
+        let _ = self
+            .write_queue
+            .put_nowait(serde_json::to_value(response).unwrap_or(Value::Null));
+    }
+
+    async fn handle_replay(&mut self, msg: JsonRpcMessage) {
+        let Some(id) = msg.id.clone() else {
+            return;
+        };
+        if self.cancel_token.lock().await.is_some() {
+            self.send_error(
+                id,
+                error_codes::INVALID_STATE,
+                "An agent turn is already in progress",
+            )
+            .await;
+            return;
+        }
+        let params: ReplayParams = match msg
+            .params
+            .clone()
+            .and_then(|params| serde_json::from_value(params).ok())
+        {
+            Some(params) => params,
+            None => {
+                self.send_error(
+                    id,
+                    error_codes::INVALID_PARAMS,
+                    "Invalid parameters for method `replay`",
+                )
+                .await;
+                return;
+            }
+        };
+        match self.soul.replay(params.checkpoint_id).await {
+            Ok(()) => {
+                let response = JsonRpcSuccessResponse {
+                    jsonrpc: "2.0",
+                    id,
+                    result: json!({"status": "ok"}),
+                };
+                let _ = self
+                    .write_queue
+                    .put_nowait(serde_json::to_value(response).unwrap_or(Value::Null));
+            }
+            Err(err) => {
+                self.send_error(
+                    id,
+                    error_codes::INVALID_STATE,
+                    err.to_string(),
+                )
+                .await;
+            }
+        }
     }
 
     async fn handle_response(&mut self, msg: &JsonRpcMessage) {

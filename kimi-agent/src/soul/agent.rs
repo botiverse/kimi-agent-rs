@@ -5,7 +5,7 @@ use std::sync::Arc;
 use chrono::Local;
 use kaos::KaosPath;
 use regex::Regex;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::agentspec::load_agent_spec;
 use crate::config::Config;
@@ -46,21 +46,145 @@ impl BuiltinSystemPromptArgs {
     }
 }
 
+const AGENTS_MD_MAX_BYTES: usize = 32 * 1024;
+
+async fn find_project_root(work_dir: &KaosPath) -> KaosPath {
+    let mut current = work_dir.clone();
+    loop {
+        if (current.clone() / ".git").exists(true).await {
+            return current;
+        }
+        let parent = current
+            .as_path()
+            .parent()
+            .map(|path| KaosPath::from(path.to_path_buf()));
+        match parent {
+            Some(parent) if parent != current => {
+                current = parent;
+            }
+            _ => return work_dir.clone(),
+        }
+    }
+}
+
+fn dirs_root_to_leaf(work_dir: &KaosPath, project_root: &KaosPath) -> Vec<KaosPath> {
+    let mut dirs = Vec::new();
+    let mut current = work_dir.as_path().to_path_buf();
+    let root = project_root.as_path().to_path_buf();
+    loop {
+        dirs.push(KaosPath::from(current.clone()));
+        if current == root {
+            break;
+        }
+        match current.parent() {
+            Some(parent) if parent != current => {
+                current = parent.to_path_buf();
+            }
+            _ => break,
+        }
+    }
+    dirs.reverse();
+    dirs
+}
+
+fn truncate_utf8(input: &str, limit: usize) -> String {
+    if input.len() <= limit {
+        return input.to_string();
+    }
+    let bytes = input.as_bytes();
+    let mut end = limit.min(bytes.len());
+    while end > 0 && std::str::from_utf8(&bytes[..end]).is_err() {
+        end -= 1;
+    }
+    std::str::from_utf8(&bytes[..end])
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
 pub async fn load_agents_md(work_dir: &KaosPath) -> Option<String> {
-    let candidates = [
-        work_dir.clone() / "AGENTS.md",
-        work_dir.clone() / "agents.md",
-    ];
-    for path in candidates {
-        if path.is_file(true).await {
+    let project_root = find_project_root(work_dir).await;
+    let dirs = dirs_root_to_leaf(work_dir, &project_root);
+
+    let mut discovered: Vec<(KaosPath, String)> = Vec::new();
+    for dir in dirs {
+        let kimi_path = dir.clone() / ".kimi" / "AGENTS.md";
+        let root_candidates = [dir.clone() / "AGENTS.md", dir.clone() / "agents.md"];
+
+        let mut candidates = Vec::new();
+        if kimi_path.is_file(true).await {
+            candidates.push(kimi_path);
+        }
+        for candidate in root_candidates {
+            if candidate.is_file(true).await {
+                candidates.push(candidate);
+                break;
+            }
+        }
+
+        for path in candidates {
             if let Ok(text) = path.read_text().await {
-                info!("Loaded agents.md: {}", path.to_string_lossy());
-                return Some(text.trim().to_string());
+                let content = text.trim().to_string();
+                if !content.is_empty() {
+                    info!("Loaded agents.md: {}", path.to_string_lossy());
+                    discovered.push((path, content));
+                }
             }
         }
     }
-    info!("No AGENTS.md found in {}", work_dir.to_string_lossy());
-    None
+
+    if discovered.is_empty() {
+        info!(
+            "No AGENTS.md found from {} to {}",
+            project_root.to_string_lossy(),
+            work_dir.to_string_lossy()
+        );
+        return None;
+    }
+
+    let mut remaining: isize = AGENTS_MD_MAX_BYTES as isize;
+    let mut budgeted: Vec<Option<(KaosPath, String)>> = vec![None; discovered.len()];
+    for index in (0..discovered.len()).rev() {
+        let (path, content) = &discovered[index];
+        let annotation = format!("<!-- From: {} -->\n", path.to_string_lossy());
+        let separator_cost = if index < discovered.len() - 1 {
+            "\n\n".len() as isize
+        } else {
+            0
+        };
+        let overhead = annotation.len() as isize + separator_cost;
+        remaining -= overhead;
+        if remaining <= 0 {
+            budgeted[index] = Some((path.clone(), String::new()));
+            remaining = 0;
+            continue;
+        }
+
+        let limited = truncate_utf8(content, remaining as usize);
+        if limited.len() < content.len() {
+            warn!("AGENTS.md truncated due to size limit: {}", path.to_string_lossy());
+        }
+        remaining -= limited.len() as isize;
+        budgeted[index] = Some((path.clone(), limited));
+    }
+
+    let mut parts = Vec::new();
+    for (path, content) in budgeted.into_iter().flatten() {
+        if content.is_empty() {
+            continue;
+        }
+        parts.push(format!(
+            "<!-- From: {} -->\n{}",
+            path.to_string_lossy(),
+            content
+        ));
+    }
+
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n\n"))
+    }
 }
 
 #[derive(Clone)]
