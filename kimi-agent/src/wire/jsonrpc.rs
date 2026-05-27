@@ -124,6 +124,7 @@ pub mod error_codes {
     pub const LLM_NOT_SET: i64 = -32001;
     pub const LLM_NOT_SUPPORTED: i64 = -32002;
     pub const CHAT_PROVIDER_ERROR: i64 = -32003;
+    pub const AUTH_EXPIRED: i64 = -32004;
 }
 
 pub mod statuses {
