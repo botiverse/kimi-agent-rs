@@ -612,12 +612,6 @@ impl KimiSoul {
                 Ok(res) => break (res, handle),
                 Err(err) => {
                     let _ = handle.await;
-                    // Auth-class error: one immediate retry on first attempt
-                    // (mirrors upstream _run_with_connection_recovery behavior)
-                    if attempts == 1 && is_auth_error(&err) {
-                        info!("Auth error on first attempt, retrying immediately: {}", err);
-                        continue;
-                    }
                     if attempts >= self.runtime.config.loop_control.max_retries_per_step as usize
                         || !is_retryable_error(&err)
                     {
@@ -1163,16 +1157,5 @@ fn is_retryable_error(err: &ChatProviderError) -> bool {
         | ChatProviderErrorKind::EmptyResponse => true,
         ChatProviderErrorKind::Status(code) => matches!(code, 429 | 500 | 502 | 503 | 504),
         ChatProviderErrorKind::Other => false,
-    }
-}
-
-fn is_auth_error(err: &ChatProviderError) -> bool {
-    match err.kind {
-        ChatProviderErrorKind::Status(code) => matches!(code, 401 | 403),
-        ChatProviderErrorKind::Other => {
-            let msg = err.message.to_lowercase();
-            msg.contains("auth") || msg.contains("unauthorized") || msg.contains("forbidden")
-        }
-        _ => false,
     }
 }
