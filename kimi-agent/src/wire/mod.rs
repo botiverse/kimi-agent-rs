@@ -43,3 +43,5 @@ pub use kosong::tooling::{
     BriefDisplayBlock, DiffDisplayBlock, DisplayBlock, ShellDisplayBlock, TodoDisplayBlock,
     TodoDisplayItem, ToolResult, ToolReturnValue, UnknownDisplayBlock,
 };
+
+pub use server::ensure_property_types;
