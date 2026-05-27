@@ -230,13 +230,12 @@ impl WireServer {
         let mut rejected = Vec::new();
         if let Some(external_tools) = params.external_tools {
             let mut toolset = self.soul.agent().toolset.lock().await;
-            for mut tool in external_tools {
+            for tool in external_tools {
                 if toolset.has_builtin_tool(&tool.name) {
                     rejected
                         .push(json!({"name": tool.name, "reason": "conflicts with builtin tool"}));
                     continue;
                 }
-                ensure_property_types(&mut tool.parameters);
                 match toolset.register_external_tool(&tool.name, &tool.description, tool.parameters)
                 {
                     Ok(()) => accepted.push(tool.name),
@@ -787,50 +786,4 @@ async fn request_tool_call(
     let out = build_request_message(msg_id, WireMessage::ToolCallRequest(request.clone()));
     let _ = write_queue.put_nowait(serde_json::to_value(out).unwrap_or(Value::Null));
     let _ = request.wait().await;
-}
-
-/// Ensure all JSON Schema `type` fields are arrays.
-/// Coerces string-typed `"type"` values to single-element arrays,
-/// passes through already-array types unchanged, and recurses into
-/// nested `properties`, `items`, `additionalProperties`, and composite
-/// schemas (`allOf`, `anyOf`, `oneOf`).
-#[doc(hidden)]
-pub fn ensure_property_types(schema: &mut Value) {
-    let Some(obj) = schema.as_object_mut() else {
-        return;
-    };
-
-    // Coerce "type": "string" → "type": ["string"]
-    if let Some(ty) = obj.get("type") {
-        if ty.is_string() {
-            let s = ty.as_str().unwrap_or("string").to_string();
-            obj.insert("type".to_string(), Value::Array(vec![Value::String(s)]));
-        }
-    }
-
-    // Recurse into properties
-    if let Some(Value::Object(props)) = obj.get_mut("properties") {
-        for prop_value in props.values_mut() {
-            ensure_property_types(prop_value);
-        }
-    }
-
-    // Recurse into items
-    if let Some(items) = obj.get_mut("items") {
-        ensure_property_types(items);
-    }
-
-    // Recurse into additionalProperties
-    if let Some(additional) = obj.get_mut("additionalProperties") {
-        ensure_property_types(additional);
-    }
-
-    // Recurse into composite schemas
-    for key in ["allOf", "anyOf", "oneOf"] {
-        if let Some(Value::Array(variants)) = obj.get_mut(key) {
-            for variant in variants.iter_mut() {
-                ensure_property_types(variant);
-            }
-        }
-    }
 }

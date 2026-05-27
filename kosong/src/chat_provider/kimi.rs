@@ -20,6 +20,7 @@ use crate::message::{
     ToolCallPart, VideoURL, VideoURLPart,
 };
 use crate::tooling::Tool;
+use crate::utils::jsonschema::ensure_property_types;
 
 #[derive(Clone)]
 pub struct Kimi {
@@ -523,7 +524,7 @@ fn convert_tool(tool: &Tool) -> Value {
             "function": {
                 "name": tool.name,
                 "description": tool.description,
-                "parameters": tool.parameters,
+                "parameters": ensure_property_types(&tool.parameters),
             }
         })
     }
