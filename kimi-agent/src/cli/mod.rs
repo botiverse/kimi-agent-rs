@@ -186,7 +186,7 @@ pub async fn run() -> Result<()> {
         return Ok(());
     }
 
-    init_logging(cli.debug).await?;
+    init_logging(resolve_log_debug(cli.verbose, cli.debug)).await?;
 
     preflight_explicit_config(&cli).await?;
 
@@ -464,11 +464,23 @@ async fn post_run(session: &Session) -> Result<()> {
     Ok(())
 }
 
+fn resolve_log_debug(verbose: bool, debug: bool) -> bool {
+    verbose || debug
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn resolve_log_debug_treats_verbose_as_debug_logging() {
+        assert!(!resolve_log_debug(false, false));
+        assert!(resolve_log_debug(true, false));
+        assert!(resolve_log_debug(false, true));
+        assert!(resolve_log_debug(true, true));
+    }
 
     #[tokio::test]
     async fn preflight_rejects_bad_explicit_config_file_for_subcommand() {
