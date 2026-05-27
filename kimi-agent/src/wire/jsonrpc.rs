@@ -60,6 +60,21 @@ pub struct PromptParams {
     pub user_input: UserInput,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SteerParams {
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SetPlanModeParams {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReplayParams {
+    pub checkpoint_id: i64,
+}
+
 #[derive(Debug, Serialize)]
 pub struct JsonRpcSuccessResponse {
     pub jsonrpc: &'static str,

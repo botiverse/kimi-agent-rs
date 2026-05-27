@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -65,6 +65,8 @@ pub struct KimiSoul {
     checkpoint_with_user_message: bool,
     slash_commands: Vec<SlashCommandInfo>,
     slash_handlers: HashMap<String, SlashHandler>,
+    steer_queue: tokio::sync::Mutex<VecDeque<String>>,
+    plan_mode: tokio::sync::Mutex<bool>,
 }
 
 enum SlashHandler {
@@ -97,6 +99,8 @@ impl KimiSoul {
             checkpoint_with_user_message,
             slash_commands: Vec::new(),
             slash_handlers: HashMap::new(),
+            steer_queue: tokio::sync::Mutex::new(VecDeque::new()),
+            plan_mode: tokio::sync::Mutex::new(false),
         };
         soul.build_slash_commands();
         soul
@@ -112,6 +116,27 @@ impl KimiSoul {
 
     pub fn context(&self) -> &tokio::sync::Mutex<Context> {
         &self.context
+    }
+
+    pub async fn push_steer(&self, message: String) {
+        self.steer_queue.lock().await.push_back(message);
+    }
+
+    pub async fn set_plan_mode(&self, enabled: bool) {
+        *self.plan_mode.lock().await = enabled;
+    }
+
+    pub async fn is_plan_mode(&self) -> bool {
+        *self.plan_mode.lock().await
+    }
+
+    pub async fn replay(&self, checkpoint_id: i64) -> anyhow::Result<()> {
+        let mut context = self.context.lock().await;
+        if checkpoint_id < 0 || checkpoint_id >= context.n_checkpoints() {
+            return Err(anyhow::anyhow!("Checkpoint {} does not exist", checkpoint_id));
+        }
+        context.revert_to(checkpoint_id).await?;
+        Ok(())
     }
 
     fn build_slash_commands(&mut self) {
@@ -373,6 +398,61 @@ impl KimiSoul {
         }
         debug!("Appended user message to context");
         self.agent_loop().await
+    }
+
+    async fn plan_turn(&self, user_message: Message) -> Result<TurnOutcome, anyhow::Error> {
+        let llm = self.runtime.llm.as_ref().ok_or_else(|| LLMNotSet)?;
+        let missing = check_message(&user_message, &llm.capabilities);
+        if !missing.is_empty() {
+            return Err(anyhow::Error::new(LLMNotSupported::new(
+                llm.model_name(),
+                missing.into_iter().collect(),
+            )));
+        }
+
+        wire_send(WireMessage::StepBegin(StepBegin { n: 1 }));
+        self.checkpoint().await?;
+        {
+            let mut context = self.context.lock().await;
+            context.append_messages(user_message).await?;
+        }
+
+        let history = { self.context.lock().await.history().to_vec() };
+        let mut stream = llm
+            .chat_provider
+            .generate(&self.agent.system_prompt, &[], &history)
+            .await
+            .map_err(anyhow::Error::new)?;
+
+        let mut assistant_content = Vec::new();
+        loop {
+            match stream.next_part().await {
+                Ok(Some(StreamedMessagePart::Content(content))) => {
+                    wire_send(WireMessage::ContentPart(content.clone()));
+                    assistant_content.push(content);
+                }
+                Ok(Some(StreamedMessagePart::ToolCall(call))) => {
+                    wire_send(WireMessage::ToolCall(call));
+                }
+                Ok(Some(StreamedMessagePart::ToolCallPart(part))) => {
+                    wire_send(WireMessage::ToolCallPart(part));
+                }
+                Ok(None) => break,
+                Err(err) => return Err(anyhow::Error::new(err)),
+            }
+        }
+
+        let assistant_message = Message::new(Role::Assistant, assistant_content);
+        {
+            let mut context = self.context.lock().await;
+            context.append_messages(assistant_message.clone()).await?;
+        }
+
+        Ok(TurnOutcome {
+            stop_reason: "plan_mode",
+            final_message: Some(assistant_message),
+            step_count: 1,
+        })
     }
 
     async fn agent_loop(&self) -> Result<TurnOutcome, anyhow::Error> {
@@ -739,12 +819,28 @@ impl Soul for KimiSoul {
     }
 
     async fn run(&self, user_input: UserInput) -> anyhow::Result<()> {
-        let user_message = match user_input.clone() {
+        let mut user_message = match user_input.clone() {
             UserInput::Text(text) => {
                 Message::new(Role::User, vec![ContentPart::Text(TextPart::new(text))])
             }
             UserInput::Parts(parts) => Message::new(Role::User, parts),
         };
+
+        // Drain steer queue and prepend to text input
+        let steer_messages: Vec<String> = {
+            let mut queue = self.steer_queue.lock().await;
+            std::mem::take(&mut *queue).into_iter().collect()
+        };
+        if !steer_messages.is_empty() {
+            let steer_text = steer_messages.join("\n");
+            let original_text = user_message.extract_text(" ").trim().to_string();
+            let new_text = format!("[ steer ]\n{}\n\n{}", steer_text, original_text);
+            user_message = Message::new(
+                Role::User,
+                vec![ContentPart::Text(TextPart::new(new_text))],
+            );
+        }
+
         let text_input = user_message.extract_text(" ").trim().to_string();
 
         wire_send(WireMessage::TurnBegin(TurnBegin { user_input }));
@@ -758,6 +854,8 @@ impl Soul for KimiSoul {
                 self.runtime.config.loop_control.max_ralph_iterations,
             );
             runner.run(self, "").await?;
+        } else if self.is_plan_mode().await {
+            let _ = self.plan_turn(user_message).await?;
         } else {
             let _ = self.turn(user_message).await?;
         }
