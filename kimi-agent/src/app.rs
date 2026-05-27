@@ -101,7 +101,7 @@ impl KimiCLI {
             provider = Some(LLMProvider {
                 provider_type: ProviderType::Kimi,
                 base_url: "".to_string(),
-                api_key: "".to_string(),
+                api_key: crate::config::SecretString::default(),
                 env: None,
                 custom_headers: None,
             });

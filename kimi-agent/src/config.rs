@@ -34,12 +34,51 @@ pub enum ModelCapability {
     AlwaysThinking,
 }
 
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SecretString(String);
+
+impl SecretString {
+    pub fn new(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
+    pub fn expose_secret(&self) -> &str {
+        &self.0
+    }
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl Default for SecretString {
+    fn default() -> Self {
+        Self(String::new())
+    }
+}
+
+impl std::fmt::Debug for SecretString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "SecretString([REDACTED])")
+    }
+}
+
+impl std::fmt::Display for SecretString {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[REDACTED]")
+    }
+}
+
+impl std::hash::Hash for SecretString {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LLMProvider {
     #[serde(rename = "type")]
     pub provider_type: ProviderType,
     pub base_url: String,
-    pub api_key: String,
+    pub api_key: SecretString,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -99,7 +138,7 @@ impl LoopControl {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoonshotSearchConfig {
     pub base_url: String,
-    pub api_key: String,
+    pub api_key: SecretString,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_headers: Option<HashMap<String, String>>,
 }
@@ -107,7 +146,7 @@ pub struct MoonshotSearchConfig {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoonshotFetchConfig {
     pub base_url: String,
-    pub api_key: String,
+    pub api_key: SecretString,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom_headers: Option<HashMap<String, String>>,
 }
@@ -413,7 +452,7 @@ async fn path_exists(path: &Path) -> bool {
 }
 
 fn default_max_steps_per_turn() -> i64 {
-    100
+    1000
 }
 
 fn default_max_retries_per_step() -> i64 {

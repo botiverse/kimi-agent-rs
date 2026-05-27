@@ -214,7 +214,7 @@ async fn test_fetch_url_with_service() {
     let mut fixture = RuntimeFixture::new();
     fixture.runtime.config.services.moonshot_fetch = Some(MoonshotFetchConfig {
         base_url: format!("{}/fetch", server.uri()),
-        api_key: "test-key".to_string(),
+        api_key: kimi_agent::config::SecretString::new("test-key"),
         custom_headers: Some(
             [("X-Custom-Header".to_string(), "custom-value".to_string())]
                 .into_iter()

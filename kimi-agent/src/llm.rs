@@ -50,7 +50,7 @@ pub fn augment_provider_with_env_vars(
             }
             if let Ok(api_key) = env::var("KIMI_API_KEY") {
                 if !api_key.is_empty() {
-                    provider.api_key = api_key;
+                    provider.api_key = crate::config::SecretString::new(api_key);
                     applied.insert("KIMI_API_KEY".to_string(), "******".to_string());
                 }
             }
@@ -100,7 +100,7 @@ pub fn augment_provider_with_env_vars(
             }
             if let Ok(api_key) = env::var("OPENAI_API_KEY") {
                 if !api_key.is_empty() {
-                    provider.api_key = api_key;
+                    provider.api_key = crate::config::SecretString::new(api_key);
                 }
             }
         }
@@ -143,7 +143,7 @@ pub async fn create_llm(
             }
             let mut kimi = kosong::chat_provider::kimi::Kimi::new(
                 model.model.clone(),
-                Some(provider.api_key.clone()),
+                Some(provider.api_key.expose_secret().to_string()),
                 Some(provider.base_url.clone()),
                 Some(headers),
             )

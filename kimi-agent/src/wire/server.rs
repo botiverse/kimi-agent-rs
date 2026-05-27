@@ -10,7 +10,7 @@ use tracing::{debug, error, info, warn};
 use kosong::chat_provider::ChatProviderError;
 use kosong::tooling::tool_error;
 
-use crate::constant::{NAME, VERSION};
+use crate::constant::{NAME, VERSION, user_agent};
 use crate::session::preserve_interrupted_turn;
 use crate::soul::kimisoul::KimiSoul;
 use crate::soul::{LLMNotSet, LLMNotSupported, MaxStepsReached, RunCancelled, Soul, run_soul};
@@ -256,7 +256,7 @@ impl WireServer {
 
         let mut result = json!({
             "protocol_version": WIRE_PROTOCOL_VERSION,
-            "server": {"name": NAME, "version": VERSION},
+            "server": {"name": NAME, "version": VERSION, "user_agent": user_agent()},
             "slash_commands": slash_commands,
         });
         if !accepted.is_empty() || !rejected.is_empty() {

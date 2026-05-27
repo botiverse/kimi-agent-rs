@@ -65,12 +65,12 @@ impl RuntimeFixture {
         let mut config = get_default_config();
         config.services.moonshot_search = Some(MoonshotSearchConfig {
             base_url: "https://api.kimi.com/coding/v1/search".to_string(),
-            api_key: "test-api-key".to_string(),
+            api_key: kimi_agent::config::SecretString::new("test-api-key"),
             custom_headers: None,
         });
         config.services.moonshot_fetch = Some(MoonshotFetchConfig {
             base_url: "https://api.kimi.com/coding/v1/fetch".to_string(),
-            api_key: "test-api-key".to_string(),
+            api_key: kimi_agent::config::SecretString::new("test-api-key"),
             custom_headers: None,
         });
 

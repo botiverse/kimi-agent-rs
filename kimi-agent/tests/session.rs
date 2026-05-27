@@ -107,7 +107,7 @@ async fn test_create_sets_fallback_title() {
     let work_path = KaosPath::from(work_dir.path().to_path_buf());
 
     let session = Session::create(work_path, None, None).await;
-    assert!(session.title.starts_with("Untitled ("));
+    assert_eq!(session.title, "Untitled");
     assert!(session.context_file.exists());
 }
 

@@ -71,7 +71,7 @@ impl SearchWeb {
         Ok(Self {
             description: desc,
             base_url: service.base_url,
-            api_key: service.api_key,
+            api_key: service.api_key.expose_secret().to_string(),
             custom_headers: service.custom_headers.unwrap_or_default(),
         })
     }

@@ -50,7 +50,7 @@ impl Session {
     }
 
     pub async fn refresh(&mut self) {
-        self.title = format!("Untitled ({})", self.id);
+        self.title = "Untitled".to_string();
         self.updated_at = file_mtime(&self.context_file).await.unwrap_or(0.0);
 
         let mut records = self.wire_file.iter_records();
