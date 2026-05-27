@@ -163,7 +163,7 @@ fn make_llm(sequences: Vec<Vec<StreamedMessagePart>>) -> kimi_agent::llm::LLM {
 }
 
 #[tokio::test]
-async fn test_steer_prepended_to_user_input() {
+async fn test_steer_injected_as_separate_user_messages() {
     let fixture = RuntimeFixture::new();
     let runtime = fixture.runtime.clone();
 
@@ -185,15 +185,12 @@ async fn test_steer_prepended_to_user_input() {
     assert!(collected.iter().any(|m| matches!(m, WireMessage::TurnBegin(_))));
     assert!(collected.iter().any(|m| matches!(m, WireMessage::TurnEnd(_))));
 
-    // Verify history contains the prepended steer text
+    // Verify history: steer messages are separate user messages before the actual prompt
     let history = soul.context().lock().await.history().to_vec();
-    assert_eq!(history.len(), 2);
-    let user_msg = &history[0];
-    let text = user_msg.extract_text(" ");
-    assert!(text.contains("[ steer ]"), "steer banner missing: {}", text);
-    assert!(text.contains("Be concise."), "first steer missing: {}", text);
-    assert!(text.contains("Use bullet points."), "second steer missing: {}", text);
-    assert!(text.contains("hello"), "original prompt missing: {}", text);
+    assert_eq!(history.len(), 4, "expected 4 messages: 2 steer + 1 user + 1 assistant");
+    assert_eq!(history[0].extract_text(" "), "Be concise.");
+    assert_eq!(history[1].extract_text(" "), "Use bullet points.");
+    assert_eq!(history[2].extract_text(" "), "hello");
 }
 
 #[tokio::test]

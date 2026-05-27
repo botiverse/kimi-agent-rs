@@ -819,31 +819,31 @@ impl Soul for KimiSoul {
     }
 
     async fn run(&self, user_input: UserInput) -> anyhow::Result<()> {
-        let mut user_message = match user_input.clone() {
+        let user_message = match user_input.clone() {
             UserInput::Text(text) => {
                 Message::new(Role::User, vec![ContentPart::Text(TextPart::new(text))])
             }
             UserInput::Parts(parts) => Message::new(Role::User, parts),
         };
+        let text_input = user_message.extract_text(" ").trim().to_string();
 
-        // Drain steer queue and prepend to text input
+        wire_send(WireMessage::TurnBegin(TurnBegin { user_input }));
+
+        // Drain steer queue and inject each steer as a separate user message
         let steer_messages: Vec<String> = {
             let mut queue = self.steer_queue.lock().await;
             std::mem::take(&mut *queue).into_iter().collect()
         };
         if !steer_messages.is_empty() {
-            let steer_text = steer_messages.join("\n");
-            let original_text = user_message.extract_text(" ").trim().to_string();
-            let new_text = format!("[ steer ]\n{}\n\n{}", steer_text, original_text);
-            user_message = Message::new(
-                Role::User,
-                vec![ContentPart::Text(TextPart::new(new_text))],
-            );
+            let mut context = self.context.lock().await;
+            for steer_text in steer_messages {
+                let steer_msg = Message::new(
+                    Role::User,
+                    vec![ContentPart::Text(TextPart::new(steer_text))],
+                );
+                context.append_messages(steer_msg).await?;
+            }
         }
-
-        let text_input = user_message.extract_text(" ").trim().to_string();
-
-        wire_send(WireMessage::TurnBegin(TurnBegin { user_input }));
 
         if let Some(command_call) = parse_slash_command_call(&text_input) {
             self.handle_slash(&command_call.name, &command_call.args)
