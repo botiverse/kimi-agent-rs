@@ -64,7 +64,7 @@ impl FetchURL {
         headers.insert(reqwest::header::USER_AGENT, user_agent().parse().unwrap());
         headers.insert(
             reqwest::header::AUTHORIZATION,
-            format!("Bearer {}", service.api_key).parse().unwrap(),
+            format!("Bearer {}", service.api_key.expose_secret()).parse().unwrap(),
         );
         headers.insert("X-Msh-Tool-Call-Id", tool_call.id.parse().unwrap());
         headers.insert(reqwest::header::ACCEPT, "text/markdown".parse().unwrap());

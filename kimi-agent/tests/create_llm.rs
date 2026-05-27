@@ -56,7 +56,7 @@ fn test_augment_provider_with_env_vars_kimi() {
     let mut provider = LLMProvider {
         provider_type: ProviderType::Kimi,
         base_url: "https://original.test/v1".to_string(),
-        api_key: "orig-key".to_string(),
+        api_key: kimi_agent::config::SecretString::new("orig-key"),
         env: None,
         custom_headers: None,
     };
@@ -74,7 +74,7 @@ fn test_augment_provider_with_env_vars_kimi() {
         LLMProvider {
             provider_type: ProviderType::Kimi,
             base_url: "https://env.test/v1".to_string(),
-            api_key: "env-key".to_string(),
+            api_key: kimi_agent::config::SecretString::new("env-key"),
             env: None,
             custom_headers: None,
         }
@@ -101,7 +101,7 @@ fn test_augment_provider_with_env_vars_invalid_max_context_size() {
     let mut provider = LLMProvider {
         provider_type: ProviderType::Kimi,
         base_url: "https://original.test/v1".to_string(),
-        api_key: "orig-key".to_string(),
+        api_key: kimi_agent::config::SecretString::new("orig-key"),
         env: None,
         custom_headers: None,
     };
@@ -132,7 +132,7 @@ async fn test_create_llm_kimi_model_parameters() {
     let provider = LLMProvider {
         provider_type: ProviderType::Kimi,
         base_url: "https://api.test/v1".to_string(),
-        api_key: "test-key".to_string(),
+        api_key: kimi_agent::config::SecretString::new("test-key"),
         env: None,
         custom_headers: None,
     };
@@ -173,7 +173,7 @@ async fn test_create_llm_invalid_temperature_env() {
     let provider = LLMProvider {
         provider_type: ProviderType::Kimi,
         base_url: "https://api.test/v1".to_string(),
-        api_key: "test-key".to_string(),
+        api_key: kimi_agent::config::SecretString::new("test-key"),
         env: None,
         custom_headers: None,
     };
@@ -199,7 +199,7 @@ async fn test_create_llm_echo_provider() {
     let provider = LLMProvider {
         provider_type: ProviderType::Echo,
         base_url: "".to_string(),
-        api_key: "".to_string(),
+        api_key: kimi_agent::config::SecretString::default(),
         env: None,
         custom_headers: None,
     };
@@ -224,7 +224,7 @@ async fn test_create_llm_requires_base_url_for_kimi() {
     let provider = LLMProvider {
         provider_type: ProviderType::Kimi,
         base_url: "".to_string(),
-        api_key: "test-key".to_string(),
+        api_key: kimi_agent::config::SecretString::new("test-key"),
         env: None,
         custom_headers: None,
     };
