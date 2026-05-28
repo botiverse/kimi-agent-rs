@@ -1,28 +1,30 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
+use kosong::chat_provider::kimi::Kimi;
 use kosong::chat_provider::ChatProviderError;
 use kosong::tooling::tool_error;
 
 use crate::constant::{NAME, VERSION};
 use crate::session::preserve_interrupted_turn;
 use crate::soul::kimisoul::KimiSoul;
-use crate::soul::{LLMNotSet, LLMNotSupported, MaxStepsReached, RunCancelled, Soul, run_soul};
+use crate::soul::{run_soul, LLMNotSet, LLMNotSupported, MaxStepsReached, RunCancelled, Soul};
 use crate::utils::{Queue, QueueShutDown};
 use crate::wire::{
     ApprovalRequest, ApprovalResponse, ToolCallRequest, ToolResult, Wire, WireMessage,
 };
 
 use crate::wire::jsonrpc::{
+    build_event_message, build_request_message, error_codes, statuses, ClientInfo,
     InitializeParams, JsonRpcErrorObject, JsonRpcErrorResponse, JsonRpcErrorResponseNullableId,
     JsonRpcMessage, JsonRpcSuccessResponse, PromptParams, ReplayParams, SetPlanModeParams,
-    SteerParams, build_event_message, build_request_message, error_codes, statuses,
+    SteerParams,
 };
 use crate::wire::protocol::WIRE_PROTOCOL_VERSION;
 
@@ -226,6 +228,8 @@ impl WireServer {
             }
         };
 
+        self.apply_wire_client_info(params.client.as_ref());
+
         let mut accepted = Vec::new();
         let mut rejected = Vec::new();
         if let Some(external_tools) = params.external_tools {
@@ -277,6 +281,20 @@ impl WireServer {
         let _ = self
             .write_queue
             .put_nowait(serde_json::to_value(response).unwrap_or(Value::Null));
+    }
+
+    fn apply_wire_client_info(&self, client: Option<&ClientInfo>) {
+        let Some(llm) = self.soul.runtime().llm.as_ref() else {
+            return;
+        };
+        let Some(kimi) = llm.chat_provider.as_any().downcast_ref::<Kimi>() else {
+            return;
+        };
+        let (name, version) = match client {
+            Some(client) => (Some(client.name.as_str()), client.version.as_deref()),
+            None => (None, None),
+        };
+        kimi.apply_wire_client_info(name, version);
     }
 
     async fn handle_prompt(&mut self, msg: JsonRpcMessage) {
@@ -562,12 +580,8 @@ impl WireServer {
                     .put_nowait(serde_json::to_value(response).unwrap_or(Value::Null));
             }
             Err(err) => {
-                self.send_error(
-                    id,
-                    error_codes::INVALID_STATE,
-                    err.to_string(),
-                )
-                .await;
+                self.send_error(id, error_codes::INVALID_STATE, err.to_string())
+                    .await;
             }
         }
     }

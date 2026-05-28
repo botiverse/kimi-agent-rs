@@ -2,13 +2,14 @@ use std::any::Any;
 use std::collections::VecDeque;
 use std::env;
 use std::pin::Pin;
+use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use bytes::Bytes;
 use futures::StreamExt;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, USER_AGENT};
 use reqwest::{Client, Url};
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 use crate::chat_provider::{
@@ -30,6 +31,8 @@ pub struct Kimi {
     stream: bool,
     client: Client,
     generation_kwargs: Map<String, Value>,
+    base_user_agent: String,
+    current_user_agent: Arc<RwLock<String>>,
 }
 
 impl Kimi {
@@ -76,6 +79,13 @@ impl Kimi {
             }
         }
 
+        let base_user_agent = headers
+            .get(USER_AGENT)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("KimiCLI")
+            .to_string();
+        let current_user_agent = Arc::new(RwLock::new(base_user_agent.clone()));
+
         let client = Client::builder()
             .default_headers(headers)
             .build()
@@ -88,7 +98,25 @@ impl Kimi {
             stream: true,
             client,
             generation_kwargs: Map::new(),
+            base_user_agent,
+            current_user_agent,
         })
+    }
+
+    pub fn apply_wire_client_info(&self, client_name: Option<&str>, client_version: Option<&str>) {
+        let ua = format_wire_user_agent(&self.base_user_agent, client_name, client_version);
+        let mut guard = self
+            .current_user_agent
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *guard = ua;
+    }
+
+    fn current_user_agent(&self) -> String {
+        self.current_user_agent
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     pub fn with_stream(mut self, stream: bool) -> Self {
@@ -137,6 +165,7 @@ impl Kimi {
             client: self.client.clone(),
             api_key: self.api_key.clone(),
             base_url: self.base_url.clone(),
+            current_user_agent: Arc::clone(&self.current_user_agent),
         }
     }
 }
@@ -218,6 +247,7 @@ impl ChatProvider for Kimi {
             .client
             .post(url)
             .header(AUTHORIZATION, format!("Bearer {}", self.api_key))
+            .header(USER_AGENT, self.current_user_agent())
             .json(&body)
             .send()
             .await
@@ -282,6 +312,7 @@ pub struct KimiFiles {
     client: Client,
     api_key: String,
     base_url: Url,
+    current_user_agent: Arc<RwLock<String>>,
 }
 
 impl KimiFiles {
@@ -318,6 +349,7 @@ impl KimiFiles {
             .client
             .post(url)
             .header(AUTHORIZATION, format!("Bearer {}", self.api_key))
+            .header(USER_AGENT, self.current_user_agent())
             .multipart(form)
             .send()
             .await
@@ -343,6 +375,64 @@ impl KimiFiles {
                 id: None,
             },
         })
+    }
+}
+
+impl KimiFiles {
+    fn current_user_agent(&self) -> String {
+        self.current_user_agent
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+}
+
+fn format_wire_user_agent(
+    base_user_agent: &str,
+    client_name: Option<&str>,
+    client_version: Option<&str>,
+) -> String {
+    let suffix = client_name.map(str::trim).filter(|value| !value.is_empty());
+    let Some(name) = suffix else {
+        return base_user_agent.to_string();
+    };
+    let mut details = name.to_string();
+    if let Some(version) = client_version
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        details.push(' ');
+        details.push_str(version);
+    }
+    format!("{base_user_agent} ({details})")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_wire_user_agent;
+
+    #[test]
+    fn format_wire_user_agent_without_client_info() {
+        assert_eq!(
+            format_wire_user_agent("KimiCLI/1.2.3", None, None),
+            "KimiCLI/1.2.3"
+        );
+    }
+
+    #[test]
+    fn format_wire_user_agent_with_client_name_only() {
+        assert_eq!(
+            format_wire_user_agent("KimiCLI/1.2.3", Some("vscode"), None),
+            "KimiCLI/1.2.3 (vscode)"
+        );
+    }
+
+    #[test]
+    fn format_wire_user_agent_with_name_and_version() {
+        assert_eq!(
+            format_wire_user_agent("KimiCLI/1.2.3", Some("vscode"), Some("0.8.0")),
+            "KimiCLI/1.2.3 (vscode 0.8.0)"
+        );
     }
 }
 
