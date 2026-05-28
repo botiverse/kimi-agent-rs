@@ -353,13 +353,48 @@ pub fn load_config_from_string(config_string: &str) -> Result<Config, ConfigErro
                     })?;
                     Ok(config)
                 }
-                Err(toml_error) => Err(ConfigError::new(format!(
-                    "Invalid configuration text: {}; {}",
-                    json_error, toml_error
-                ))),
+                Err(toml_error) => {
+                    let json_error = format_python_json_decode_error(config_string, &json_error);
+                    Err(ConfigError::new(format!(
+                        "Invalid configuration text: {json_error}; {toml_error}"
+                    )))
+                }
             }
         }
     }
+}
+
+fn format_python_json_decode_error(config_string: &str, err: &serde_json::Error) -> String {
+    let line = err.line();
+    let column = err.column();
+    let loc_suffix = format!(" at line {line} column {column}");
+    let detail = err.to_string();
+    let detail = detail.strip_suffix(&loc_suffix).unwrap_or(&detail);
+    let detail = match detail {
+        "expected value" => "Expecting value".to_string(),
+        "key must be a string" => "Expecting property name enclosed in double quotes".to_string(),
+        _ => {
+            let mut chars = detail.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => detail.to_string(),
+            }
+        }
+    };
+    let char_offset = line_column_to_char_offset(config_string, line, column);
+    format!("{detail}: line {line} column {column} (char {char_offset})")
+}
+
+fn line_column_to_char_offset(input: &str, line: usize, column: usize) -> usize {
+    let mut total = 0usize;
+    for (idx, current_line) in input.split('\n').enumerate() {
+        let line_number = idx + 1;
+        if line_number == line {
+            return total + column.saturating_sub(1);
+        }
+        total += current_line.chars().count() + 1;
+    }
+    total + column.saturating_sub(1)
 }
 
 pub async fn save_config(config: &Config, config_file: Option<&Path>) -> Result<(), ConfigError> {

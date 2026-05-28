@@ -70,6 +70,24 @@ fn test_load_config_text_invalid() {
 }
 
 #[test]
+fn test_load_config_text_invalid_compound_error_literal() {
+    let err = load_config_from_string("not valid {").expect_err("invalid config");
+    let err_msg = err.to_string();
+    assert!(
+        err_msg.starts_with("Invalid configuration text: "),
+        "unexpected error format: {err_msg}"
+    );
+    assert!(
+        err_msg.contains("(char "),
+        "unexpected error format: {err_msg}"
+    );
+    assert!(
+        err_msg.contains("; TOML parse error"),
+        "unexpected error format: {err_msg}"
+    );
+}
+
+#[test]
 fn test_load_config_invalid_ralph_iterations() {
     let err = load_config_from_string("{\"loop_control\": {\"max_ralph_iterations\": -2}}")
         .expect_err("invalid ralph iterations");
