@@ -454,6 +454,9 @@ pub async fn save_config(config: &Config, config_file: Option<&Path>) -> Result<
     let mut config_data = config.clone();
     config_data.is_from_default_location = false;
     config_data.source_file = None;
+    let mut config_value = serde_json::to_value(&config_data)
+        .map_err(|err| ConfigError::new(format!("Failed to serialize config: {err}")))?;
+    strip_none_values_recursive(&mut config_value);
 
     let contents = if config_file
         .extension()
@@ -461,10 +464,10 @@ pub async fn save_config(config: &Config, config_file: Option<&Path>) -> Result<
         .map(|s| s.eq_ignore_ascii_case("json"))
         .unwrap_or(false)
     {
-        serde_json::to_string_pretty(&config_data)
+        serde_json::to_string_pretty(&config_value)
             .map_err(|err| ConfigError::new(format!("Failed to serialize config: {err}")))?
     } else {
-        toml::to_string_pretty(&config_data)
+        toml::to_string_pretty(&config_value)
             .map_err(|err| ConfigError::new(format!("Failed to serialize config: {err}")))?
     };
 
@@ -472,6 +475,23 @@ pub async fn save_config(config: &Config, config_file: Option<&Path>) -> Result<
         .await
         .map_err(|err| ConfigError::new(format!("Failed to write config file: {err}")))?;
     Ok(())
+}
+
+fn strip_none_values_recursive(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.retain(|_, child| {
+                strip_none_values_recursive(child);
+                !child.is_null()
+            });
+        }
+        serde_json::Value::Array(items) => {
+            for child in items {
+                strip_none_values_recursive(child);
+            }
+        }
+        _ => {}
+    }
 }
 
 async fn migrate_json_config_to_toml() -> Result<(), ConfigError> {
