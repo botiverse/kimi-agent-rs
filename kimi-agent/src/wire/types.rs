@@ -52,6 +52,17 @@ pub struct StepBegin {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct StepInterrupted {}
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct StepRetry {
+    pub n: i64,
+    pub next_attempt: i64,
+    pub max_attempts: i64,
+    pub wait_s: f64,
+    pub error_type: String,
+    #[serde(default)]
+    pub status_code: Option<u16>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, Default)]
 pub struct CompactionBegin {}
 
@@ -326,6 +337,7 @@ pub enum WireMessage {
     TurnEnd(TurnEnd),
     StepBegin(StepBegin),
     StepInterrupted(StepInterrupted),
+    StepRetry(StepRetry),
     CompactionBegin(CompactionBegin),
     CompactionEnd(CompactionEnd),
     StatusUpdate(StatusUpdate),
@@ -346,6 +358,7 @@ impl WireMessage {
             WireMessage::TurnEnd(_) => "TurnEnd",
             WireMessage::StepBegin(_) => "StepBegin",
             WireMessage::StepInterrupted(_) => "StepInterrupted",
+            WireMessage::StepRetry(_) => "StepRetry",
             WireMessage::CompactionBegin(_) => "CompactionBegin",
             WireMessage::CompactionEnd(_) => "CompactionEnd",
             WireMessage::StatusUpdate(_) => "StatusUpdate",
@@ -408,6 +421,12 @@ impl From<StepBegin> for WireMessage {
 impl From<StepInterrupted> for WireMessage {
     fn from(value: StepInterrupted) -> Self {
         WireMessage::StepInterrupted(value)
+    }
+}
+
+impl From<StepRetry> for WireMessage {
+    fn from(value: StepRetry) -> Self {
+        WireMessage::StepRetry(value)
     }
 }
 
@@ -491,6 +510,7 @@ impl WireMessageEnvelope {
             WireMessage::TurnEnd(value) => payload_from(value)?,
             WireMessage::StepBegin(value) => payload_from(value)?,
             WireMessage::StepInterrupted(value) => payload_from(value)?,
+            WireMessage::StepRetry(value) => payload_from(value)?,
             WireMessage::CompactionBegin(value) => payload_from(value)?,
             WireMessage::CompactionEnd(value) => payload_from(value)?,
             WireMessage::StatusUpdate(value) => payload_from(value)?,
@@ -516,6 +536,7 @@ impl WireMessageEnvelope {
             "TurnEnd" => Ok(WireMessage::TurnEnd(parse_payload(payload_value)?)),
             "StepBegin" => Ok(WireMessage::StepBegin(parse_payload(payload_value)?)),
             "StepInterrupted" => Ok(WireMessage::StepInterrupted(parse_payload(payload_value)?)),
+            "StepRetry" => Ok(WireMessage::StepRetry(parse_payload(payload_value)?)),
             "CompactionBegin" => Ok(WireMessage::CompactionBegin(parse_payload(payload_value)?)),
             "CompactionEnd" => Ok(WireMessage::CompactionEnd(parse_payload(payload_value)?)),
             "StatusUpdate" => Ok(WireMessage::StatusUpdate(parse_payload(payload_value)?)),

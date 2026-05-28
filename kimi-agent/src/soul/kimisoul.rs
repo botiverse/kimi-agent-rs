@@ -28,7 +28,7 @@ use crate::tools::utils::is_tool_rejected;
 use crate::utils::{SlashCommandInfo, parse_slash_command_call};
 use crate::wire::{
     ApprovalRequest, ApprovalResponse, CompactionBegin, CompactionEnd, StatusUpdate, StepBegin,
-    StepInterrupted, TurnBegin, TurnEnd, UserInput, WireMessage,
+    StepInterrupted, StepRetry, TurnBegin, TurnEnd, UserInput, WireMessage,
 };
 
 use kosong::tooling::Toolset;
@@ -305,7 +305,7 @@ impl KimiSoul {
             return Ok(());
         }
         drop(context);
-        self.compact_context().await?;
+        self.compact_context(None).await?;
         wire_send(WireMessage::ContentPart(ContentPart::Text(TextPart::new(
             "The context has been compacted.",
         ))));
@@ -485,7 +485,7 @@ impl KimiSoul {
                     {
                         drop(context);
                         info!("Context too long, compacting...");
-                        self.compact_context().await?;
+                        self.compact_context(Some(step_no)).await?;
                     }
                 }
 
@@ -497,7 +497,7 @@ impl KimiSoul {
                     denwa.set_n_checkpoints(checkpoints);
                 }
 
-                self.step().await
+                self.step(step_no).await
             }
             .await;
 
@@ -550,8 +550,9 @@ impl KimiSoul {
         }
     }
 
-    async fn step(&self) -> Result<Option<StepOutcome>, anyhow::Error> {
+    async fn step(&self, step_no: i64) -> Result<Option<StepOutcome>, anyhow::Error> {
         let llm = self.runtime.llm.as_ref().ok_or_else(|| LLMNotSet)?;
+        let max_attempts = self.runtime.config.loop_control.max_retries_per_step as usize;
 
         let mut attempts = 0usize;
         let (result, forward_task) = loop {
@@ -612,12 +613,17 @@ impl KimiSoul {
                 Ok(res) => break (res, handle),
                 Err(err) => {
                     let _ = handle.await;
-                    if attempts >= self.runtime.config.loop_control.max_retries_per_step as usize
-                        || !is_retryable_error(&err)
-                    {
+                    if attempts >= max_attempts || !is_retryable_error(&err) {
                         return Err(anyhow::Error::new(err));
                     }
                     let delay = retry_delay(attempts);
+                    wire_send(WireMessage::StepRetry(step_retry_event(
+                        step_no,
+                        attempts,
+                        max_attempts,
+                        delay,
+                        &err,
+                    )));
                     info!(
                         "Retrying step for the {} time. Waiting {} seconds.",
                         attempts,
@@ -735,8 +741,9 @@ impl KimiSoul {
         Ok(())
     }
 
-    async fn compact_context(&self) -> Result<(), anyhow::Error> {
+    async fn compact_context(&self, step_no: Option<i64>) -> Result<(), anyhow::Error> {
         wire_send(WireMessage::CompactionBegin(CompactionBegin {}));
+        let max_attempts = self.runtime.config.loop_control.max_retries_per_step as usize;
         let mut attempts = 0usize;
         let compacted = loop {
             attempts += 1;
@@ -745,12 +752,19 @@ impl KimiSoul {
             match self.compaction.compact(&history, llm).await {
                 Ok(compacted) => break compacted,
                 Err(err) => {
-                    if attempts >= self.runtime.config.loop_control.max_retries_per_step as usize
-                        || !is_retryable_error(&err)
-                    {
+                    if attempts >= max_attempts || !is_retryable_error(&err) {
                         return Err(anyhow::Error::new(err));
                     }
                     let delay = retry_delay(attempts);
+                    if let Some(step_no) = step_no {
+                        wire_send(WireMessage::StepRetry(step_retry_event(
+                            step_no,
+                            attempts,
+                            max_attempts,
+                            delay,
+                            &err,
+                        )));
+                    }
                     info!(
                         "Retrying compaction for the {} time. Waiting {} seconds.",
                         attempts,
@@ -1157,5 +1171,30 @@ fn is_retryable_error(err: &ChatProviderError) -> bool {
         | ChatProviderErrorKind::EmptyResponse => true,
         ChatProviderErrorKind::Status(code) => matches!(code, 429 | 500 | 502 | 503 | 504),
         ChatProviderErrorKind::Other => false,
+    }
+}
+
+fn step_retry_event(
+    step_no: i64,
+    attempts: usize,
+    max_attempts: usize,
+    delay: Duration,
+    err: &ChatProviderError,
+) -> StepRetry {
+    let (error_type, status_code) = match err.kind {
+        ChatProviderErrorKind::Connection => ("APIConnectionError".to_string(), None),
+        ChatProviderErrorKind::Timeout => ("APITimeoutError".to_string(), None),
+        ChatProviderErrorKind::EmptyResponse => ("APIEmptyResponseError".to_string(), None),
+        ChatProviderErrorKind::Status(code) => ("APIStatusError".to_string(), Some(code)),
+        ChatProviderErrorKind::Other => ("ChatProviderError".to_string(), None),
+    };
+
+    StepRetry {
+        n: step_no,
+        next_attempt: attempts as i64 + 1,
+        max_attempts: max_attempts as i64,
+        wait_s: delay.as_secs_f64(),
+        error_type,
+        status_code,
     }
 }
