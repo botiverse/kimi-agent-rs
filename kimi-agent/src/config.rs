@@ -353,13 +353,91 @@ pub fn load_config_from_string(config_string: &str) -> Result<Config, ConfigErro
                     })?;
                     Ok(config)
                 }
-                Err(toml_error) => Err(ConfigError::new(format!(
-                    "Invalid configuration text: {}; {}",
-                    json_error, toml_error
-                ))),
+                Err(toml_error) => {
+                    let json_error = format_python_json_decode_error(config_string, &json_error);
+                    let toml_error = format_python_toml_error(config_string, &toml_error);
+                    Err(ConfigError::new(format!(
+                        "Invalid configuration text: {json_error}; {toml_error}"
+                    )))
+                }
             }
         }
     }
+}
+
+fn format_python_json_decode_error(config_string: &str, err: &serde_json::Error) -> String {
+    let line = err.line();
+    let mut column = err.column();
+    let loc_suffix = format!(" at line {line} column {column}");
+    let detail = err.to_string();
+    let detail = detail.strip_suffix(&loc_suffix).unwrap_or(&detail);
+    let detail = match detail {
+        "expected value" => "Expecting value".to_string(),
+        // Python json reports this shape as "Expecting value" at column 1.
+        "expected ident" => {
+            if column > 1 {
+                column -= 1;
+            }
+            "Expecting value".to_string()
+        }
+        "key must be a string" => "Expecting property name enclosed in double quotes".to_string(),
+        _ => {
+            let mut chars = detail.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+                None => detail.to_string(),
+            }
+        }
+    };
+    let char_offset = line_column_to_char_offset(config_string, line, column);
+    format!("{detail}: line {line} column {column} (char {char_offset})")
+}
+
+fn line_column_to_char_offset(input: &str, line: usize, column: usize) -> usize {
+    let mut total = 0usize;
+    for (idx, current_line) in input.split('\n').enumerate() {
+        let line_number = idx + 1;
+        if line_number == line {
+            return total + column.saturating_sub(1);
+        }
+        total += current_line.chars().count() + 1;
+    }
+    total + column.saturating_sub(1)
+}
+
+fn format_python_toml_error(config_string: &str, err: &toml::de::Error) -> String {
+    if let Some(normalized) = normalize_invalid_key_toml_error(config_string, err) {
+        return normalized;
+    }
+    err.to_string()
+}
+
+fn normalize_invalid_key_toml_error(config_string: &str, err: &toml::de::Error) -> Option<String> {
+    let message = err.message();
+    let looks_like_key_without_value = message.contains("key with no value")
+        || (message.contains("invalid key") && message.contains("expected `=`"));
+    if !looks_like_key_without_value {
+        return None;
+    }
+
+    let line = err.span().map_or(1, |span| byte_offset_to_line(config_string, span.start));
+    let line_content = config_string.lines().nth(line.saturating_sub(1))?;
+    let (delimiter_index, _) = line_content.char_indices().find(|(_, ch)| {
+        matches!(ch, '=' | ':' | '{' | '[' | '}' | ']' | ',' | '#')
+    })?;
+    let invalid_key = line_content[..delimiter_index].trim_end();
+    if invalid_key.is_empty() {
+        return None;
+    }
+
+    Some(format!(
+        "Invalid key \"{invalid_key}\" at line {line} col {delimiter_index}"
+    ))
+}
+
+fn byte_offset_to_line(input: &str, byte_offset: usize) -> usize {
+    let clamped = byte_offset.min(input.len());
+    input[..clamped].bytes().filter(|b| *b == b'\n').count() + 1
 }
 
 pub async fn save_config(config: &Config, config_file: Option<&Path>) -> Result<(), ConfigError> {
