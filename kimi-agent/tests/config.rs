@@ -1,9 +1,11 @@
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use kimi_agent::config::{
-    Config, LoopControl, MCPConfig, Services, get_default_config, load_config,
-    load_config_from_string, save_config,
+    Config, LLMModel, LLMProvider, LoopControl, MCPConfig, ModelCapability, MoonshotSearchConfig,
+    ProviderType, SecretString, Services, get_default_config, load_config, load_config_from_string,
+    save_config,
 };
 
 #[test]
@@ -157,4 +159,71 @@ async fn test_save_config_skips_source_file() {
         .await
         .expect("read saved config");
     assert!(!contents.contains("source_file"));
+}
+
+#[tokio::test]
+async fn test_save_config_excludes_nested_none_fields_in_json() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config_path = tmp.path().join("config.json");
+    let mut config = get_default_config();
+
+    config.default_model = "kimi".to_string();
+    config.providers.insert(
+        "moonshot".to_string(),
+        LLMProvider {
+            provider_type: ProviderType::Kimi,
+            base_url: "https://api.moonshot.ai/v1".to_string(),
+            api_key: SecretString::new("sk-test"),
+            env: None,
+            custom_headers: None,
+        },
+    );
+    config.models.insert(
+        "kimi".to_string(),
+        LLMModel {
+            provider: "moonshot".to_string(),
+            model: "kimi-k2".to_string(),
+            max_context_size: 128_000,
+            capabilities: Some(HashSet::from([ModelCapability::Thinking])),
+        },
+    );
+    config.services = Services {
+        moonshot_search: Some(MoonshotSearchConfig {
+            base_url: "https://search.moonshot.ai/v1".to_string(),
+            api_key: SecretString::new("search-key"),
+            custom_headers: None,
+        }),
+        moonshot_fetch: None,
+    };
+
+    save_config(&config, Some(&config_path))
+        .await
+        .expect("save config");
+
+    let contents = tokio::fs::read_to_string(&config_path)
+        .await
+        .expect("read saved config");
+    assert!(
+        !contents.contains("null"),
+        "saved config should not contain null fields: {contents}"
+    );
+
+    let value: serde_json::Value = serde_json::from_str(&contents).expect("valid json");
+    assert_eq!(
+        value["providers"]["moonshot"],
+        serde_json::json!({
+            "type": "kimi",
+            "base_url": "https://api.moonshot.ai/v1",
+            "api_key": "sk-test"
+        })
+    );
+    assert_eq!(
+        value["services"],
+        serde_json::json!({
+            "moonshot_search": {
+                "base_url": "https://search.moonshot.ai/v1",
+                "api_key": "search-key"
+            }
+        })
+    );
 }
