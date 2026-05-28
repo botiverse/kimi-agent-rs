@@ -191,6 +191,8 @@ impl Default for MCPConfig {
 pub struct Config {
     #[serde(skip)]
     pub is_from_default_location: bool,
+    #[serde(skip)]
+    pub source_file: Option<PathBuf>,
     #[serde(default)]
     pub default_model: String,
     #[serde(default)]
@@ -235,6 +237,7 @@ pub fn get_config_file() -> PathBuf {
 pub fn get_default_config() -> Config {
     Config {
         is_from_default_location: false,
+        source_file: None,
         default_model: String::new(),
         default_thinking: false,
         models: HashMap::new(),
@@ -281,6 +284,7 @@ async fn load_existing_config_file(
     };
 
     config.is_from_default_location = is_default_config_file;
+    config.source_file = Some(config_file.to_path_buf());
     config.validate().map_err(|err| {
         ConfigError::new(format!(
             "Invalid configuration file {}: {err}",
@@ -315,6 +319,7 @@ pub async fn load_config(config_file: Option<&Path>) -> Result<Config, ConfigErr
         );
         save_config(&config, Some(config_file)).await?;
         config.is_from_default_location = is_default_config_file;
+        config.source_file = Some(config_file.to_path_buf());
         return Ok(config);
     }
 
@@ -326,38 +331,34 @@ pub fn load_config_from_string(config_string: &str) -> Result<Config, ConfigErro
         return Err(ConfigError::new("Configuration text cannot be empty"));
     }
 
-    let mut json_error: Option<String> = None;
-    let json_value: Option<serde_json::Value> = match serde_json::from_str(config_string) {
-        Ok(value) => Some(value),
-        Err(err) => {
-            json_error = Some(err.to_string());
-            None
-        }
-    };
-    if let Some(value) = json_value {
-        let mut config: Config = serde_json::from_value(value)
-            .map_err(|err| ConfigError::new(format!("Invalid configuration text: {err}")))?;
-        config.is_from_default_location = false;
-        config
-            .validate()
-            .map_err(|err| ConfigError::new(format!("Invalid configuration text: {err}")))?;
-        return Ok(config);
-    }
-
-    let toml_result: Result<Config, _> = toml::from_str::<Config>(config_string);
-    match toml_result {
-        Ok(mut config) => {
+    match serde_json::from_str::<serde_json::Value>(config_string) {
+        Ok(value) => {
+            let mut config: Config = serde_json::from_value(value)
+                .map_err(|err| ConfigError::new(format!("Invalid configuration text: {err}")))?;
             config.is_from_default_location = false;
+            config.source_file = None;
             config
                 .validate()
                 .map_err(|err| ConfigError::new(format!("Invalid configuration text: {err}")))?;
             Ok(config)
         }
-        Err(toml_error) => Err(ConfigError::new(format!(
-            "Invalid configuration text: {}; {}",
-            json_error.unwrap_or_else(|| "invalid json".to_string()),
-            toml_error
-        ))),
+        Err(json_error) => {
+            let toml_result: Result<Config, _> = toml::from_str::<Config>(config_string);
+            match toml_result {
+                Ok(mut config) => {
+                    config.is_from_default_location = false;
+                    config.source_file = None;
+                    config.validate().map_err(|err| {
+                        ConfigError::new(format!("Invalid configuration text: {err}"))
+                    })?;
+                    Ok(config)
+                }
+                Err(toml_error) => Err(ConfigError::new(format!(
+                    "Invalid configuration text: {}; {}",
+                    json_error, toml_error
+                ))),
+            }
+        }
     }
 }
 
@@ -374,6 +375,7 @@ pub async fn save_config(config: &Config, config_file: Option<&Path>) -> Result<
 
     let mut config_data = config.clone();
     config_data.is_from_default_location = false;
+    config_data.source_file = None;
 
     let contents = if config_file
         .extension()
