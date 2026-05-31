@@ -7,7 +7,6 @@ use crate::wire::{UserInput, WireMessage, serialize_wire_message};
 pub struct JsonRpcErrorObject {
     pub code: i64,
     pub message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<Value>,
 }
 

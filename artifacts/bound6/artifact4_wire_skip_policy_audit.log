@@ -1,23 +1,15 @@
-# wire/types.rs skip-policy audit for cfg-012 c-fix
-branch: nora-batch2-teama-cfg012-a110bc-discovery-20260531
-commit_before_audit: 23ed302a0701cb56d3f8421e7ce9a1a2fb4b0101
+[wire skip policy audit] 2026-05-31T05:55:35Z
+head=de25bd1
 
-Command:
-rg -n "skip_serializing_if\s*=\s*\"Option::is_none\"|Option<" kimi-agent/src/wire/types.rs
+wire skip_serializing_if occurrences:
+wire_count=0
 
-63:    pub status_code: Option<u16>,
-75:    pub context_usage: Option<f64>,
-77:    pub token_usage: Option<TokenUsage>,
-79:    pub message_id: Option<String>,
-98:    value: Arc<Mutex<Option<T>>>,
-209:    pub arguments: Option<String>,
-248:    pub agent_id: Option<String>,
-249:    pub subagent_type: Option<String>,
-280:            agent_id: Option<String>,
-281:            subagent_type: Option<String>,
-307:            agent_id: Option<String>,
-309:            subagent_type: Option<String>,
-
-Finding:
-- No remaining skip_serializing_if Option fields in wire/types.rs after SubagentEvent fix.
-- ApprovalRequest optional upstream fields are not modeled in Rust struct (parked follow-up).
+config skip_serializing_if occurrences:
+82:    #[serde(default, skip_serializing_if = "Option::is_none")]
+84:    #[serde(default, skip_serializing_if = "Option::is_none")]
+93:    #[serde(default, skip_serializing_if = "Option::is_none")]
+142:    #[serde(default, skip_serializing_if = "Option::is_none")]
+150:    #[serde(default, skip_serializing_if = "Option::is_none")]
+156:    #[serde(default, skip_serializing_if = "Option::is_none")]
+158:    #[serde(default, skip_serializing_if = "Option::is_none")]
+config_count=7

@@ -1,5 +1,6 @@
 use serde_json::{Value, json};
 
+use kimi_agent::wire::jsonrpc::JsonRpcErrorObject;
 use kimi_agent::wire::{
     ApprovalRequest, ApprovalResponse, ApprovalResponseKind, CompactionBegin, CompactionEnd,
     StatusUpdate, StepBegin, StepInterrupted, StepRetry, SubagentEvent, ToolCallRequest, TurnBegin,
@@ -324,6 +325,23 @@ fn test_wire_message_record_roundtrip() {
         parsed.to_wire_message().unwrap(),
         WireMessage::TurnBegin(TurnBegin {
             user_input: UserInput::Parts(vec![ContentPart::Text(TextPart::new("hi"))])
+        })
+    );
+}
+
+#[test]
+fn test_cfg012_c_jsonrpcerror_data_null() {
+    let error = JsonRpcErrorObject {
+        code: -32000,
+        message: "invalid state".to_string(),
+        data: None,
+    };
+    assert_eq!(
+        serde_json::to_value(&error).expect("serialize jsonrpc error"),
+        json!({
+            "code": -32000,
+            "message": "invalid state",
+            "data": null
         })
     );
 }
