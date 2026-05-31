@@ -1,0 +1,22 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.53s
+     Running tests/config.rs (target/debug/deps/config-1bcf8224bbb4f954)
+
+running 15 tests
+test test_default_config ... ok
+test test_default_config_dump ... ok
+test test_load_config_text_json ... ok
+test test_load_config_text_invalid_compound_error_literal_json_key_shape ... ok
+test test_load_config_text_invalid_compound_error_literal ... ok
+test test_load_config_text_invalid ... ok
+test test_load_config_invalid_ralph_iterations ... ok
+test test_load_config_text_invalid_compound_error_literal_single_key ... ok
+test test_load_config_reserved_context_size ... ok
+test test_load_config_reserved_context_size_too_low ... ok
+test test_load_config_text_toml ... ok
+test test_save_config_roundtrip_strips_explicit_null_service_fields ... ok
+test test_save_config_excludes_nested_none_fields_in_json ... ok
+test test_load_config_sets_source_file ... ok
+test test_save_config_skips_source_file ... ok
+
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

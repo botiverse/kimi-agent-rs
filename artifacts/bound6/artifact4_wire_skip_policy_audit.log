@@ -1,0 +1,15 @@
+[wire skip policy audit] 2026-05-31T05:55:35Z
+head=de25bd1
+
+wire skip_serializing_if occurrences:
+wire_count=0
+
+config skip_serializing_if occurrences:
+82:    #[serde(default, skip_serializing_if = "Option::is_none")]
+84:    #[serde(default, skip_serializing_if = "Option::is_none")]
+93:    #[serde(default, skip_serializing_if = "Option::is_none")]
+142:    #[serde(default, skip_serializing_if = "Option::is_none")]
+150:    #[serde(default, skip_serializing_if = "Option::is_none")]
+156:    #[serde(default, skip_serializing_if = "Option::is_none")]
+158:    #[serde(default, skip_serializing_if = "Option::is_none")]
+config_count=7
