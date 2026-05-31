@@ -224,6 +224,8 @@ fn test_wire_message_serde() {
             "type": "SubagentEvent",
             "payload": {
                 "parent_tool_call_id": "task_789",
+                "agent_id": null,
+                "subagent_type": null,
                 "event": {"type": "StepBegin", "payload": {"n": 2}}
             }
         })

@@ -1,0 +1,14 @@
+   Compiling kimi-agent v1.8.0 (/Users/tianyizhuang/kimi-agent-rs-bound6/kimi-agent)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 22.34s
+     Running tests/wire_message.rs (target/debug/deps/wire_message-7faed6e0aa880b92)
+
+running 6 tests
+test test_type_inspection ... ok
+test test_bad_wire_message_serde ... ok
+test test_approval_request_resolved_compat ... ok
+test test_approval_request_deserialize_without_display ... ok
+test test_wire_message_record_roundtrip ... ok
+test test_wire_message_serde ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

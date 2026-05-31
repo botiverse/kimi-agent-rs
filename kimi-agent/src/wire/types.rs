@@ -277,9 +277,7 @@ impl Serialize for SubagentEvent {
         #[derive(Serialize)]
         struct SubagentEventSerde {
             parent_tool_call_id: String,
-            #[serde(skip_serializing_if = "Option::is_none")]
             agent_id: Option<String>,
-            #[serde(skip_serializing_if = "Option::is_none")]
             subagent_type: Option<String>,
             event: WireMessageEnvelope,
         }
