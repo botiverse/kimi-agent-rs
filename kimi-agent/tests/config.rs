@@ -8,6 +8,34 @@ use kimi_agent::config::{
     save_config,
 };
 
+fn collect_null_leaf_paths(value: &serde_json::Value, path: &str, paths: &mut Vec<String>) {
+    match value {
+        serde_json::Value::Null => paths.push(path.to_string()),
+        serde_json::Value::Object(map) => {
+            for (key, child) in map {
+                let child_path = format!("{path}.{key}");
+                collect_null_leaf_paths(child, &child_path, paths);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                let child_path = format!("{path}[{index}]");
+                collect_null_leaf_paths(child, &child_path, paths);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn assert_no_null_leaves(value: &serde_json::Value) {
+    let mut null_paths = Vec::new();
+    collect_null_leaf_paths(value, "$", &mut null_paths);
+    assert!(
+        null_paths.is_empty(),
+        "serialized config should not contain JSON null leaves, found at: {null_paths:?}"
+    );
+}
+
 #[test]
 fn test_default_config() {
     let config = get_default_config();
@@ -172,8 +200,8 @@ async fn test_save_config_excludes_nested_none_fields_in_json() {
         "moonshot".to_string(),
         LLMProvider {
             provider_type: ProviderType::Kimi,
-            base_url: "https://api.moonshot.ai/v1".to_string(),
-            api_key: SecretString::new("sk-test"),
+            base_url: "https://api.moonshot.ai/v1/null-safe".to_string(),
+            api_key: SecretString::new("sk-null-token"),
             env: None,
             custom_headers: None,
         },
@@ -190,7 +218,7 @@ async fn test_save_config_excludes_nested_none_fields_in_json() {
     config.services = Services {
         moonshot_search: Some(MoonshotSearchConfig {
             base_url: "https://search.moonshot.ai/v1".to_string(),
-            api_key: SecretString::new("search-key"),
+            api_key: SecretString::new("search-null-key"),
             custom_headers: None,
         }),
         moonshot_fetch: None,
@@ -203,18 +231,14 @@ async fn test_save_config_excludes_nested_none_fields_in_json() {
     let contents = tokio::fs::read_to_string(&config_path)
         .await
         .expect("read saved config");
-    assert!(
-        !contents.contains("null"),
-        "saved config should not contain null fields: {contents}"
-    );
-
     let value: serde_json::Value = serde_json::from_str(&contents).expect("valid json");
+    assert_no_null_leaves(&value);
     assert_eq!(
         value["providers"]["moonshot"],
         serde_json::json!({
             "type": "kimi",
-            "base_url": "https://api.moonshot.ai/v1",
-            "api_key": "sk-test"
+            "base_url": "https://api.moonshot.ai/v1/null-safe",
+            "api_key": "sk-null-token"
         })
     );
     assert_eq!(
@@ -222,8 +246,31 @@ async fn test_save_config_excludes_nested_none_fields_in_json() {
         serde_json::json!({
             "moonshot_search": {
                 "base_url": "https://search.moonshot.ai/v1",
-                "api_key": "search-key"
+                "api_key": "search-null-key"
             }
         })
     );
+}
+
+#[tokio::test]
+async fn test_save_config_roundtrip_strips_explicit_null_service_fields() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let config_path = tmp.path().join("config.json");
+    let config =
+        load_config_from_string("{\"services\":{\"moonshot_search\":null,\"moonshot_fetch\":null}}")
+            .expect("load config with explicit null service fields");
+
+    assert!(config.services.moonshot_search.is_none());
+    assert!(config.services.moonshot_fetch.is_none());
+
+    save_config(&config, Some(&config_path))
+        .await
+        .expect("save config");
+
+    let contents = tokio::fs::read_to_string(&config_path)
+        .await
+        .expect("read saved config");
+    let value: serde_json::Value = serde_json::from_str(&contents).expect("valid json");
+    assert_no_null_leaves(&value);
+    assert_eq!(value["services"], serde_json::json!({}));
 }

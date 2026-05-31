@@ -2,9 +2,9 @@ use serde_json::{Value, json};
 
 use kimi_agent::wire::{
     ApprovalRequest, ApprovalResponse, ApprovalResponseKind, CompactionBegin, CompactionEnd,
-    StatusUpdate, StepBegin, StepInterrupted, SubagentEvent, ToolCallRequest, TurnBegin, TurnEnd,
-    UserInput, WireMessage, WireMessageEnvelope, WireMessageRecord, deserialize_wire_message,
-    is_event, is_request, is_wire_message, serialize_wire_message,
+    StatusUpdate, StepBegin, StepInterrupted, StepRetry, SubagentEvent, ToolCallRequest, TurnBegin,
+    TurnEnd, UserInput, WireMessage, WireMessageEnvelope, WireMessageRecord,
+    deserialize_wire_message, is_event, is_request, is_wire_message, serialize_wire_message,
 };
 use kosong::message::{ContentPart, ImageURLPart, TextPart, ToolCall, ToolCallPart};
 use kosong::tooling::{BriefDisplayBlock, DisplayBlock, ToolOutput, ToolResult, ToolReturnValue};
@@ -64,6 +64,30 @@ fn test_wire_message_serde() {
     assert_eq!(
         serialize_wire_message(&msg).unwrap(),
         json!({"type": "StepInterrupted", "payload": {}})
+    );
+    assert_roundtrip(msg);
+
+    let msg = WireMessage::StepRetry(StepRetry {
+        n: 1,
+        next_attempt: 2,
+        max_attempts: 3,
+        wait_s: 1.0,
+        error_type: "TestError".to_string(),
+        status_code: None,
+    });
+    assert_eq!(
+        serialize_wire_message(&msg).unwrap(),
+        json!({
+            "type": "StepRetry",
+            "payload": {
+                "n": 1,
+                "next_attempt": 2,
+                "max_attempts": 3,
+                "wait_s": 1.0,
+                "error_type": "TestError",
+                "status_code": null
+            }
+        })
     );
     assert_roundtrip(msg);
 
